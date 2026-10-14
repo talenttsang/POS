@@ -1,8 +1,12 @@
-# POS – cash register
+# GenC Beauty POS
 
-A point-of-sale for the salons, starting with cash transactions. The screen
-design it follows is `design/superhairpieces-pos-reference.html` (a self-contained
-prototype; open it through `python -m http.server` as its banner explains).
+A cash register for trade-show booths: Flask on Cloud Run, Supabase (Postgres)
+behind it, an admin portal for users, events and product uploads, and an
+analytics tab for the CFO. It started life in the `pos/` folder of
+`mannetsang/trustpilot-ai-pipeline` and was extracted here with its history.
+The screen design it follows is `design/superhairpieces-pos-reference.html`
+(a self-contained prototype; open it through `python -m http.server` as its
+banner explains).
 
 Customers are not modelled on purpose. The first use is the cash till at the
 ESI Montreal trade show, selling the products on the show-prep Google Sheet.
@@ -60,8 +64,8 @@ echo|set /p="123456"|gcloud secrets create POS_ACCESS_CODE --replication-policy=
 ### Running it locally
 
 ```
-pip install -r pos\src\cloud_run\requirements.txt
-set SUPABASE_DB_URL=... && set POS_ACCESS_CODE=1234 && python pos\src\cloud_run\main.py
+pip install -r src\cloud_run\requirements.txt
+set SUPABASE_DB_URL=... && set POS_ACCESS_CODE=1234 && python src\cloud_run\main.py
 ```
 
 then open http://localhost:8080.
@@ -80,11 +84,10 @@ products not in this file" box deactivates whatever the file no longer lists.
 
 The register is live at https://shp-pos-304363458561.northamerica-northeast1.run.app
 
-`pos/deploy.sh` deploys the service `shp-pos` to Cloud Run in
+`deploy.sh` deploys the service `shp-pos` to Cloud Run in
 `northamerica-northeast1` (Montreal) from source, and prints its URL. It runs
-from a Claude cloud session, a workstation, or the `deploy-pos.yml` workflow
-once the `GCP_SA_KEY` repository secret is set (it is empty today, which is
-why none of the deploy workflows in this repo have ever succeeded).
+from a Claude cloud session, a workstation, or the `deploy.yml` workflow
+once the `GCP_SA_KEY` repository secret is set.
 
 The deploying identity needs these roles on `shp-ai-bot-2026`: Cloud Run
 Admin, Cloud Build Editor, Artifact Registry Administrator, Storage Admin,
@@ -132,13 +135,14 @@ decided.
 One line, Windows cmd, from the repo root:
 
 ```
-python pos\apply_migration.py
+python apply_migration.py
 ```
 
 `--list` shows applied and pending files without changing anything.
 
 Credentials come from Secret Manager on `shp-ai-bot-2026` through
-`lib/secrets.py`, or from a gitignored `.env` for local runs. There are two
+`lib/secrets.py` (a copy of the shared helper from the pipeline repo), or from
+a gitignored `.env` for local runs. There are two
 routes in and the script picks the first that has credentials:
 
 | Route | Secret | Needs | Where it works |
@@ -159,8 +163,8 @@ Two layouts are recognised from the header row: the show-prep tab
 Windows cmd:
 
 ```
-python pos\import_products.py
-python pos\import_products.py --sheet-id <id> --tab Items --skip-sku Test1 --deactivate-missing
+python import_products.py
+python import_products.py --sheet-id <id> --tab Items --skip-sku Test1 --deactivate-missing
 ```
 
 A blank cell, or a column the layout lacks (Clover has no cost), keeps the
