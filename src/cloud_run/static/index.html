@@ -86,7 +86,11 @@
       <div class="lines" id="cartLines"></div>
       <div class="tools">
         <label for="discountInput">Discount (whole sale)</label>
-        <input id="discountInput" type="text" inputmode="decimal" pattern="[0-9]*[.]?[0-9]*" placeholder="0.00" data-numpad="decimal">
+        <div class="seg" id="discountMode" role="group" aria-label="Discount type">
+          <button type="button" class="on" data-mode="amount">$</button>
+          <button type="button" data-mode="percent">%</button>
+        </div>
+        <input id="discountInput" type="text" inputmode="decimal" pattern="[0-9]*[.]?[0-9]*" placeholder="0.00" data-numpad="decimal" aria-label="Discount amount">
       </div>
       <div class="totals" id="cartTotals"></div>
       <div class="cta">

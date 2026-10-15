@@ -23,6 +23,7 @@
     products: [],
     cart: [],                     // [{ product, qty, barcode }]
     discount: 0,
+    discountMode: localStorage.getItem('pos.discountMode') === 'percent' ? 'percent' : 'amount',
     cashCents: 0,
     pendingSale: null,            // the payload being sent, kept for retry
     orders: [],
@@ -307,14 +308,16 @@
 
   const cartTotals = () => {
     const subtotal = cents(state.cart.reduce((a, l) => a + Number(l.product.price) * l.qty, 0));
-    const discount = Math.min(cents(Math.max(0, state.discount || 0)), subtotal);
+    const entered = Math.max(0, state.discount || 0);
+    const percent = state.discountMode === 'percent' ? Math.min(entered, 100) : null;
+    const discount = Math.min(cents(percent === null ? entered : subtotal * percent / 100), subtotal);
     const total = cents(subtotal - discount);
-    return { subtotal, discount, total };
+    return { subtotal, discount, total, percent };
   };
 
   const totalsHtml = (t) => `
     <div class="trow"><span>Subtotal</span><span class="money">${money(t.subtotal)}</span></div>
-    ${t.discount ? `<div class="trow"><span>Discount</span><span class="money">−${money(t.discount)}</span></div>` : ''}
+    ${t.discount ? `<div class="trow"><span>Discount${t.percent ? ` (${t.percent}%)` : ''}</span><span class="money">−${money(t.discount)}</span></div>` : ''}
     <div class="trow grand"><span>Total</span><span class="money">${money(t.total)}</span></div>`;
 
   const renderCart = () => {
@@ -350,6 +353,21 @@
   });
   $('clearBtn').addEventListener('click', () => { state.cart = []; state.discount = 0; state.pendingSale = null; $('discountInput').value = ''; renderCart(); });
   $('discountInput').addEventListener('input', () => { state.discount = Number($('discountInput').value) || 0; renderCart(); });
+  const applyDiscountMode = () => {
+    const pct = state.discountMode === 'percent';
+    $('discountMode').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === state.discountMode));
+    $('discountInput').placeholder = pct ? '0' : '0.00';
+    renderCart();
+  };
+  $('discountMode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mode]');
+    if (!b || b.dataset.mode === state.discountMode) return;
+    state.discountMode = b.dataset.mode;
+    localStorage.setItem('pos.discountMode', state.discountMode);
+    state.discount = 0; $('discountInput').value = '';
+    applyDiscountMode();
+  });
+  applyDiscountMode();
 
   // ------------------------------------------------------------ payment
 
