@@ -112,6 +112,16 @@ Service Usage Admin, and Service Account User on the Compute Engine default
 service account that the service runs as. That runtime account also needs
 Secret Manager Secret Accessor for the two secrets above.
 
+## Custom domain
+
+`domain.sh` puts `pos.gencbeauty.com` in front of the service with a global
+HTTPS load balancer and a Google-managed certificate, and prints the one DNS
+record (an A record for `pos`) the domain owner has to add. It is idempotent.
+Check the certificate with
+`gcloud compute ssl-certificates describe genc-pos-cert --global --project=genc-pos-2026`;
+it reads ACTIVE once the record resolves. The run.app URL keeps working
+alongside the domain.
+
 ## Data
 
 Lives in Supabase (Postgres). Schema files are in `supabase/migrations/` and
