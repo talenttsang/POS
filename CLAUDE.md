@@ -21,15 +21,16 @@ A cash register for trade-show booths. Read `README.md` first: it covers the
 register, users and the admin portal, events, the data model and migrations,
 product uploads, running locally and deploying.
 
-- Live service: Cloud Run `shp-pos` in `northamerica-northeast1`,
-  https://shp-pos-304363458561.northamerica-northeast1.run.app (deploy with
-  `bash deploy.sh`; the session service account holds the needed roles).
+- Live service: Cloud Run `genc-pos` in `northamerica-northeast1` on GCP
+  project `genc-pos-2026` (deploy with `bash deploy.sh`; the session service
+  account is an owner of that project).
 - Database: Supabase project `ngwlwntvoteuafeplobx`; schema in
   `supabase/migrations/`, applied once each by `apply_migration.py` over the
   Supabase Management API (secret `SUPABASE_ACCESS_TOKEN`) or a direct
   connection (secret `SUPABASE_DB_URL`).
-- Credentials: GCP project `shp-ai-bot-2026`, Secret Manager, resolved by
-  `lib/secrets.py`. In cloud sessions use `/opt/gcp-venv/bin/python` for
+- Credentials: Secret Manager, resolved by `lib/secrets.py`. The service reads
+  its secrets from its own project `genc-pos-2026`; scripts run from a session
+  default to `shp-ai-bot-2026`, where the same secrets also live. In cloud sessions use `/opt/gcp-venv/bin/python` for
   anything that touches Secret Manager. The till master code is the
   `POS_ACCESS_CODE` secret; never paste it into a chat.
 - Product photos come from the SkuVault-synced `products` table in the same

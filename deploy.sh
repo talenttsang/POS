@@ -9,9 +9,9 @@
 # rotated without a redeploy.
 set -euo pipefail
 
-PROJECT="${PROJECT:-shp-ai-bot-2026}"
+PROJECT="${PROJECT:-genc-pos-2026}"
 REGION="${REGION:-northamerica-northeast1}"     # Montreal
-SERVICE="${SERVICE:-shp-pos}"
+SERVICE="${SERVICE:-genc-pos}"
 SOURCE="$(cd "$(dirname "$0")" && pwd)/src/cloud_run"
 
 gcloud run deploy "$SERVICE" \

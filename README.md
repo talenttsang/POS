@@ -82,10 +82,10 @@ products not in this file" box deactivates whatever the file no longer lists.
 
 ### Deploying
 
-The register is live at https://shp-pos-304363458561.northamerica-northeast1.run.app
-
-`deploy.sh` deploys the service `shp-pos` to Cloud Run in
-`northamerica-northeast1` (Montreal) from source, and prints its URL. It runs
+`deploy.sh` deploys the service `genc-pos` to Cloud Run in
+`northamerica-northeast1` (Montreal) on GCP project `genc-pos-2026` from
+source, and prints its URL. The project holds its own copies of the
+`SUPABASE_DB_URL` and `POS_ACCESS_CODE` secrets. It runs
 from a Claude cloud session, a workstation, or the `deploy.yml` workflow
 once the `GCP_SA_KEY` repository secret is set.
 
