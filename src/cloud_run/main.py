@@ -17,9 +17,10 @@ Env vars:
                       Secret Manager (secret POS_ACCESS_CODE) and re-read every
                       minute, so it can be created or rotated without a deploy.
 
-Events (pos_events) give each show a name, currency and date range. The
-register sells under the event chosen in its header; Analytics reads one
-event at a time.
+Venues (pos_events) come in two kinds: an event (a show, with dates) and a
+store (a permanent location, with an address). POS_MODE picks which kind this
+deployment sells under (default event); the register sells under the venue
+chosen in its header and Analytics reads one venue at a time.
   GCP_PROJECT         Secret Manager project. Default shp-ai-bot-2026.
 """
 
@@ -46,6 +47,10 @@ from psycopg_pool import ConnectionPool
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
+MODE = os.environ.get("POS_MODE", "event")          # event | store
+if MODE not in ("event", "store"):
+    raise SystemExit("POS_MODE must be event or store")
+VENUE = "store" if MODE == "store" else "event"      # the word the UI uses
 CENT = Decimal("0.01")
 
 # ---------------------------------------------------------------------------
@@ -229,17 +234,22 @@ def approved_by_admin(body):
 
 
 def serialise_event(e):
-    return {"id": str(e["id"]), "code": e["code"], "name": e["name"], "startsOn": e["starts_on"].isoformat(),
-            "endsOn": e["ends_on"].isoformat(), "currency": e["currency"], "isActive": e["is_active"]}
+    return {"id": str(e["id"]), "code": e["code"], "name": e["name"], "kind": e.get("kind", "event"),
+            "address": e.get("address"),
+            "startsOn": e["starts_on"].isoformat() if e.get("starts_on") else None,
+            "endsOn": e["ends_on"].isoformat() if e.get("ends_on") else None,
+            "currency": e["currency"], "isActive": e["is_active"]}
 
 
 def active_events():
-    return query("select * from pos_events where is_active order by starts_on desc, name")
+    return query("select * from pos_events where is_active and kind = %s order by starts_on desc nulls last, name", (MODE,))
 
 
 def default_event(events):
-    """The event running today, else the next upcoming one, else the most recent."""
+    """Stores: the first by name. Events: the one running today, else the next, else the latest."""
     from datetime import date
+    if MODE == "store":
+        return sorted(events, key=lambda e: e["name"].lower())[0] if events else None
     today = date.today()
     running = [e for e in events if e["starts_on"] <= today <= e["ends_on"]]
     if running:
@@ -256,12 +266,12 @@ def event_from_request(required=True):
     key = (request.args.get("event") or body.get("eventId") or "").strip()
     if key:
         e = query("select * from pos_events where id::text = %s or code = %s", (key, key), one=True)
-        if not e:
-            abort(404, "no such event")
+        if not e or e.get("kind", "event") != MODE:
+            abort(404, f"no such {VENUE}")
         return e
     e = default_event(active_events())
     if not e and required:
-        abort(503, "no event set up: add one in the admin portal")
+        abort(503, f"no {VENUE} set up: add one in the admin portal")
     return e
 
 
@@ -270,6 +280,7 @@ def config():
     events = active_events()
     default = default_event(events)
     return jsonify({
+        "mode": MODE,
         "events": [serialise_event(e) for e in events],
         "defaultEventId": str(default["id"]) if default else None,
         "unlocked": unlocked(), "staff": session.get("staff"), "role": session.get("role"),
@@ -281,7 +292,7 @@ def config():
 @app.get("/api/admin/events")
 @require_admin
 def admin_events():
-    return jsonify([serialise_event(e) for e in query("select * from pos_events order by starts_on desc, name")])
+    return jsonify([serialise_event(e) for e in query("select * from pos_events where kind = %s order by is_active desc, starts_on desc nulls last, name", (MODE,))])
 
 
 def event_fields(body, creating):
@@ -293,11 +304,18 @@ def event_fields(body, creating):
             abort(400, "name required")
         fields["name"] = name
     for key, col in (("startsOn", "starts_on"), ("endsOn", "ends_on")):
-        if key in body or creating:
+        if key in body or (creating and MODE == "event"):
             v = str(body.get(key) or "").strip()
+            if not v and MODE == "store":
+                fields[col] = None
+                continue
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
                 abort(400, f"{key} must be YYYY-MM-DD")
             fields[col] = date.fromisoformat(v)
+    if "address" in body:
+        fields["address"] = re.sub(r"\s+", " ", str(body.get("address") or "")).strip()[:200] or None
+    if creating:
+        fields["kind"] = MODE
     if "currency" in body or creating:
         cur = str(body.get("currency") or "CAD").upper()
         if cur not in ("CAD", "USD", "EUR"):
@@ -305,7 +323,7 @@ def event_fields(body, creating):
         fields["currency"] = cur
     if "isActive" in body:
         fields["is_active"] = bool(body["isActive"])
-    if "starts_on" in fields and "ends_on" in fields and fields["ends_on"] < fields["starts_on"]:
+    if fields.get("starts_on") and fields.get("ends_on") and fields["ends_on"] < fields["starts_on"]:
         abort(400, "end date is before start date")
     return fields
 
@@ -325,7 +343,7 @@ def admin_create_event():
     fields = event_fields(body, creating=True)
     code = re.sub(r"[^a-z0-9-]+", "-", str(body.get("code") or "").lower()).strip("-") or slug(fields["name"])
     if query("select 1 from pos_events where code = %s", (code,), one=True):
-        abort(409, "an event with that code already exists")
+        abort(409, f"a {VENUE} with that code already exists")
     cols = ["code", *fields, "created_by"]
     e = query(f"insert into pos_events ({', '.join(cols)}) values ({', '.join(['%s'] * len(cols))}) returning *",
               [code, *fields.values(), session.get("staff")], one=True)
@@ -336,14 +354,14 @@ def admin_create_event():
 @require_admin
 def admin_update_event(event_id):
     body = request.get_json(silent=True) or {}
-    e = query("select * from pos_events where id = %s", (str(event_id),), one=True)
+    e = query("select * from pos_events where id = %s and kind = %s", (str(event_id), MODE), one=True)
     if not e:
-        abort(404, "no such event")
+        abort(404, f"no such {VENUE}")
     fields = event_fields(body, creating=False)
     if not fields:
         abort(400, "nothing to change")
     starts = fields.get("starts_on", e["starts_on"]); ends = fields.get("ends_on", e["ends_on"])
-    if ends < starts:
+    if starts and ends and ends < starts:
         abort(400, "end date is before start date")
     sets = ", ".join(f"{k} = %s" for k in fields)
     e = query(f"update pos_events set {sets} where id = %s returning *", [*fields.values(), str(event_id)], one=True)

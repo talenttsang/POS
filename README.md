@@ -19,14 +19,22 @@ database. Staff open it in a browser on the booth tablet or laptop, tap their
 name, enter their PIN, and sell. A USB or Bluetooth barcode scanner works as a
 keyboard: the search box treats a code followed by Enter as a scan.
 
-### Events
+### Venues: stores or events
 
-An event is a show or any selling period: a name, a currency and a start and
-end date, managed in the admin portal. The register sells under the event
-chosen in its header (remembered per device; the event running today is the
-default), every sale carries the event it was rung under, and the Sales list
-and Analytics read one event at a time. Archiving an event hides it from the
-selector and keeps its sales.
+A deployment runs in one of two modes, set by the `POS_MODE` environment
+variable in `deploy.sh`:
+
+- **store** (this deployment): venues are permanent stores with a name,
+  address and currency.
+- **event**: venues are shows with a name, currency and a start and end date;
+  the event running today is the default.
+
+Venues are managed in the admin portal. The register sells at the venue chosen
+in its header (remembered per device), every sale carries the venue it was
+rung under, and the Sales list and Analytics read one venue at a time.
+Archiving a venue hides it from the selector and keeps its sales. Both kinds
+live in the `pos_events` table with a `kind` column, so one database can serve
+a store deployment and an event deployment side by side.
 
 ### Users and the admin portal
 

@@ -113,28 +113,46 @@
   // ---- events
   let events = [];
   let editing = null;
+  let posMode = 'event';
+  const venue = () => (posMode === 'store' ? 'store' : 'event');
+  const applyMode = () => {
+    const store = posMode === 'store';
+    document.querySelectorAll('.event-only').forEach((el) => { el.hidden = store; });
+    document.querySelectorAll('.store-only').forEach((el) => { el.hidden = !store; });
+    $('venueTitle').textContent = store ? 'Stores' : 'Events';
+    $('venueHint').textContent = store
+      ? 'A permanent location. The register sells under the store chosen in its header, and Analytics reads one store at a time. Archive a store to hide it from the register; its sales are kept.'
+      : 'A show or any selling period. The register sells under the event chosen in its header, and Analytics reads one event at a time. The event running today is the default.';
+    $('evName').placeholder = store ? 'e.g. Markham · 4300 Steeles Ave E' : 'e.g. ESI Toronto 2027';
+    $('evSubmit').textContent = store ? 'Add store' : 'Add event';
+    $('venueCol').textContent = store ? 'Store' : 'Event';
+    $('venueDetailCol').textContent = store ? 'Address' : 'Dates';
+    $('eventForm').style.gridTemplateColumns = store ? '2fr 3fr 110px auto' : '2fr 1fr 1fr 110px auto';
+  };
   const today = () => new Date().toISOString().slice(0, 10);
   const loadEvents = async () => { events = await api('/api/admin/events'); renderEvents(); };
   const renderEvents = () => {
     const t = today();
     $('eventRows').innerHTML = events.length ? events.map((e) => {
-      const state = !e.isActive ? ['refunded', 'Archived'] : (e.startsOn <= t && t <= e.endsOn) ? ['', 'Running'] : e.startsOn > t ? ['partial', 'Upcoming'] : ['', 'Past'];
+      const state = !e.isActive ? ['refunded', 'Archived'] : e.kind === 'store' ? ['', 'Open'] : (e.startsOn <= t && t <= e.endsOn) ? ['', 'Running'] : e.startsOn > t ? ['partial', 'Upcoming'] : ['', 'Past'];
       return `<tr class="${e.isActive ? '' : 'inactive'}" data-id="${esc(e.id)}">
         <td><b>${esc(e.name)}</b><div class="hint">${esc(e.code)}</div></td>
-        <td>${esc(e.startsOn)} → ${esc(e.endsOn)}</td>
+        <td>${e.kind === 'store' ? esc(e.address || '') : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
         <td>${esc(e.currency)}</td>
         <td><span class="status ${state[0]}">${state[1]}</span></td>
         <td class="actions">
           <button class="sm" data-eact="edit">Edit</button>
           <button class="sm ${e.isActive ? 'danger' : ''}" data-eact="toggle">${e.isActive ? 'Archive' : 'Restore'}</button>
         </td></tr>`;
-    }).join('') : '<tr><td colspan="5" class="hint">No events yet. Add one above.</td></tr>';
+    }).join('') : `<tr><td colspan="5" class="hint">No ${venue()}s yet. Add one above.</td></tr>`;
   };
   $('eventForm').addEventListener('submit', async (e) => {
     e.preventDefault(); $('evErr').textContent = '';
     try {
-      const ev = await api('/api/admin/events', { method: 'POST', body: { name: $('evName').value, startsOn: $('evStart').value, endsOn: $('evEnd').value, currency: $('evCurrency').value } });
-      $('evName').value = ''; $('evStart').value = ''; $('evEnd').value = '';
+      const body = { name: $('evName').value, currency: $('evCurrency').value };
+      if (posMode === 'store') body.address = $('evAddress').value; else { body.startsOn = $('evStart').value; body.endsOn = $('evEnd').value; }
+      const ev = await api('/api/admin/events', { method: 'POST', body });
+      $('evName').value = ''; $('evStart').value = ''; $('evEnd').value = ''; $('evAddress').value = '';
       toast(`Added ${ev.name}`); await loadEvents();
     } catch (err) { $('evErr').textContent = err.message; }
   });
@@ -142,7 +160,7 @@
     const btn = e.target.closest('[data-eact]'); if (!btn) return;
     const ev = events.find((x) => x.id === btn.closest('tr').dataset.id); if (!ev) return;
     if (btn.dataset.eact === 'edit') {
-      editing = ev; $('esName').textContent = ev.name; $('esNameInput').value = ev.name; $('esStart').value = ev.startsOn; $('esEnd').value = ev.endsOn; $('esCurrency').value = ev.currency; $('esErr').textContent = '';
+      editing = ev; $('esName').textContent = ev.name; $('esNameInput').value = ev.name; $('esStart').value = ev.startsOn || ''; $('esEnd').value = ev.endsOn || ''; $('esAddress').value = ev.address || ''; $('esCurrency').value = ev.currency; $('esErr').textContent = '';
       openSheet('eventSheet'); return;
     }
     try {
@@ -154,8 +172,10 @@
   $('esSave').addEventListener('click', async () => {
     if (!editing) return;
     try {
-      await api(`/api/admin/events/${editing.id}`, { method: 'PATCH', body: { name: $('esNameInput').value, startsOn: $('esStart').value, endsOn: $('esEnd').value, currency: $('esCurrency').value } });
-      closeSheets(); toast('Event updated'); await loadEvents();
+      const body = { name: $('esNameInput').value, currency: $('esCurrency').value };
+      if (posMode === 'store') body.address = $('esAddress').value; else { body.startsOn = $('esStart').value; body.endsOn = $('esEnd').value; }
+      await api(`/api/admin/events/${editing.id}`, { method: 'PATCH', body });
+      closeSheets(); toast(`${posMode === 'store' ? 'Store' : 'Event'} updated`); await loadEvents();
     } catch (err) { $('esErr').textContent = err.message; }
   });
 
@@ -190,6 +210,8 @@
 
   const boot = async () => {
     const config = await api('/api/config');
+    posMode = config.mode || 'event';
+    applyMode();
     if (!config.configured && !config.hasUsers) $('loginHint').textContent = 'No master code is configured yet. Create the POS_ACCESS_CODE secret, then reload.';
     else if (!config.hasUsers) { setMode('master'); $('loginHint').textContent = 'No users yet. Sign in with the master code to add the first admin.'; }
     if (config.unlocked && config.role === 'admin') { me = { staff: config.staff, role: 'admin' }; await showAdmin(); }

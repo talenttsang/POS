@@ -22,8 +22,9 @@ register, users and the admin portal, events, the data model and migrations,
 product uploads, running locally and deploying.
 
 - Live service: Cloud Run `genc-pos` in `northamerica-northeast1` on GCP
-  project `genc-pos-2026` (deploy with `bash deploy.sh`; the session service
-  account is an owner of that project).
+  project `genc-pos-2026`, running in **store mode** (`POS_MODE=store`: the
+  register sells at permanent stores, not events). Deploy with
+  `bash deploy.sh`; the session service account is an owner of that project.
 - Database: Supabase project `ngwlwntvoteuafeplobx`; schema in
   `supabase/migrations/`, applied once each by `apply_migration.py` over the
   Supabase Management API (secret `SUPABASE_ACCESS_TOKEN`) or a direct

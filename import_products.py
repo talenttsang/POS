@@ -291,7 +291,7 @@ def main():
         categories[p["category"]] = categories.get(p["category"], 0) + 1
     print(f"sheet tab {args.tab!r}: {len(values)} rows read")
     print(f"products: {len(products)} ({active} active, {len(products) - active} inactive), barcodes: {barcodes}")
-    print("categories: " + ", ".join(f"{k} {v}" for k, v in sorted(categories.items())))
+    print("categories: " + ", ".join(f"{k or '(none)'} {v}" for k, v in sorted(categories.items(), key=lambda kv: kv[0] or "")))
     for problem in problems:
         print(f"  note: {problem}")
     if args.dry_run:

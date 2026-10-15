@@ -133,23 +133,27 @@
     const saved = localStorage.getItem('pos.event');
     state.eventId = events.some((e) => e.id === saved) ? saved : state.config.defaultEventId;
   };
+  const venueWord = () => (state.config?.mode === 'store' ? 'store' : 'event');
   const eventLabel = (e) => `${e.name} · ${e.currency}`;
   const renderEventSelect = () => {
     const events = state.config.events || [];
     const sel = $('eventSelect');
     sel.innerHTML = events.length
       ? events.map((e) => `<option value="${esc(e.id)}"${e.id === state.eventId ? ' selected' : ''}>${esc(eventLabel(e))}</option>`).join('')
-      : '<option value="">No event set up</option>';
+      : `<option value="">No ${venueWord()} set up</option>`;
     sel.disabled = events.length < 2;
+    sel.title = `${venueWord() === 'store' ? 'Store' : 'Event'} being sold under`;
     const an = $('anEvent');
-    an.innerHTML = events.map((e) => `<option value="${esc(e.id)}"${e.id === state.eventId ? ' selected' : ''}>${esc(e.name)} (${esc(e.startsOn)} to ${esc(e.endsOn)})</option>`).join('');
+    an.innerHTML = events.map((e) => `<option value="${esc(e.id)}"${e.id === state.eventId ? ' selected' : ''}>${esc(e.name)}${e.kind === 'store' ? '' : ` (${esc(e.startsOn)} to ${esc(e.endsOn)})`}</option>`).join('');
+    const allChip = document.querySelector('#anRanges [data-range="all"]');
+    if (allChip) allChip.textContent = venueWord() === 'store' ? 'All time' : 'Whole show';
   };
   $('eventSelect').addEventListener('change', () => {
     state.eventId = $('eventSelect').value;
     localStorage.setItem('pos.event', state.eventId);
     renderCart();
     renderEventSelect();
-    toast(`Selling under ${currentEvent()?.name || 'no event'}`);
+    toast(`Selling at ${currentEvent()?.name || `no ${venueWord()}`}`);
   });
   const loadNames = async () => {
     try {
@@ -607,7 +611,9 @@
     const ev = d.event;
     $('anRangeNote').textContent = (r.from || r.to)
       ? `${ev.name} · showing ${r.from || 'the start'} to ${r.to || 'today'} · ${k.sales} sales`
-      : `${ev.name} · ${ev.startsOn} to ${ev.endsOn} · whole event · ${k.sales} sales`;
+      : ev.kind === 'store'
+        ? `${ev.name} · all time · ${k.sales} sales`
+        : `${ev.name} · ${ev.startsOn} to ${ev.endsOn} · whole event · ${k.sales} sales`;
     const coverage = k.costCoveragePct == null ? '' : `cost known for ${pct(k.costCoveragePct)} of revenue`;
     $('anKpis').innerHTML = [
       kpiTile('Net revenue', money0(k.netRevenue), `${money0(k.grossRevenue)} sold, ${money0(k.refunds)} refunded`, true),

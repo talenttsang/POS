@@ -66,18 +66,19 @@
   </div>
 
   <div class="panel">
-    <h2>Events</h2>
-    <div class="hint">A show or any selling period. The register sells under the event chosen in its header, and Analytics reads one event at a time. The event running today is the default.</div>
+    <h2 id="venueTitle">Events</h2>
+    <div class="hint" id="venueHint">A show or any selling period. The register sells under the event chosen in its header, and Analytics reads one event at a time. The event running today is the default.</div>
     <form class="form" id="eventForm" style="grid-template-columns: 2fr 1fr 1fr 110px auto">
       <label>Name <input id="evName" placeholder="e.g. ESI Toronto 2027" autocomplete="off" required></label>
-      <label>Starts <input type="date" id="evStart" required></label>
-      <label>Ends <input type="date" id="evEnd" required></label>
+      <label class="event-only">Starts <input type="date" id="evStart"></label>
+      <label class="event-only">Ends <input type="date" id="evEnd"></label>
+      <label class="store-only" hidden>Address <input id="evAddress" placeholder="Street, city, province, postal code" autocomplete="off"></label>
       <label>Currency <select id="evCurrency"><option>CAD</option><option>USD</option><option>EUR</option></select></label>
-      <button class="btn primary" type="submit">Add event</button>
+      <button class="btn primary" type="submit" id="evSubmit">Add event</button>
     </form>
     <div class="err" id="evErr"></div>
     <table class="users">
-      <thead><tr><th>Event</th><th>Dates</th><th>Currency</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th id="venueCol">Event</th><th id="venueDetailCol">Dates</th><th>Currency</th><th>Status</th><th></th></tr></thead>
       <tbody id="eventRows"></tbody>
     </table>
   </div>
@@ -126,7 +127,8 @@
 <div class="sheet" id="eventSheet">
   <h3>Edit <span id="esName"></span></h3>
   <input id="esNameInput" placeholder="Name" autocomplete="off">
-  <div class="row"><input type="date" id="esStart" aria-label="Starts"><input type="date" id="esEnd" aria-label="Ends"></div>
+  <div class="row event-only"><input type="date" id="esStart" aria-label="Starts"><input type="date" id="esEnd" aria-label="Ends"></div>
+  <input id="esAddress" class="store-only" placeholder="Address" autocomplete="off" hidden>
   <select id="esCurrency"><option>CAD</option><option>USD</option><option>EUR</option></select>
   <div class="err" id="esErr"></div>
   <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="esSave">Save</button></div>
