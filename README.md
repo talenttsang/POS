@@ -59,6 +59,15 @@ received must cover the total, and each sale carries a `clientRecordId` from
 the browser so a retry after a dropped connection cannot record the sale twice.
 Refunds are cash only and need the till code typed again as approval.
 
+Every sale has a PDF invoice at `/invoice/<number>.pdf` (the "Download
+invoice" button on the sale-complete screen and "Invoice" in a sale's detail).
+It follows the BigCommerce print-invoice layout: company block, billing and
+shipping details, order facts, items, totals and comments. The company name
+and address are set in `src/cloud_run/invoice.py` and can be overridden per
+deployment with the `INVOICE_COMPANY` and `INVOICE_ADDRESS` environment
+variables. An optional customer name typed next to the Invoice button goes in
+the billing block; otherwise it reads "Walk-in customer".
+
 Configuration is by environment variable (see the docstring in `main.py`).
 Two values come from Secret Manager: `SUPABASE_DB_URL`, mounted at deploy
 time, and `POS_ACCESS_CODE`, the master code described above.

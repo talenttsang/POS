@@ -115,6 +115,7 @@ input { font: inherit; color: inherit; }
 .done .big { font-size: 52px; font-weight: 800; letter-spacing: -.02em; }
 .done .meta { color: var(--muted); }
 .done .btn { width: 100%; }
+.done a.btn { background: var(--chip); color: var(--ink); text-decoration: none; display: grid; place-items: center; }
 
 /* Orders */
 #view-orders { grid-template-columns: 1fr 380px; }
@@ -131,6 +132,9 @@ input { font: inherit; color: inherit; }
 .detail { background: var(--panel); border-left: 1px solid var(--line); padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
 .detail h3 { margin: 0; }
 .detail .muted { color: var(--muted); font-size: 13px; }
+.invoice-row { display: flex; gap: 8px; }
+.invoice-row input { flex: 1; min-width: 0; height: 42px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; font-size: 14px; }
+.invoice-row .btn { white-space: nowrap; background: var(--chip); color: var(--ink); text-decoration: none; display: grid; place-items: center; padding: 0 18px; height: 42px; }
 .summary-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .summary-table th, .summary-table td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); }
 .summary-table th:first-child, .summary-table td:first-child { text-align: left; }

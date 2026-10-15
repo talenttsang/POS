@@ -453,12 +453,15 @@
     }
   };
 
+  const invoiceUrl = (number, to) => `/invoice/${number}.pdf${to ? `?${new URLSearchParams({ to })}` : ''}`;
+
   const finishSale = (sale) => {
     $('cashTender').onclick = null;
     const change = Number(sale.change);
     $('doneKicker').textContent = change > 0.004 ? 'Change due' : 'Sale recorded · cash';
     $('doneAmount').textContent = money(change > 0.004 ? change : sale.total);
     $('doneMeta').textContent = `Sale #${sale.number} · ${money(sale.total)} · ${sale.staff} · ${currentEvent()?.name || ''}`;
+    $('doneInvoice').href = invoiceUrl(sale.number);
     state.cart = [];
     state.discount = 0;
     $('discountInput').value = '';
@@ -530,7 +533,12 @@
         <div class="trow"><span>Change</span><span class="money">${money(o.change)}</span></div>
         ${o.refundAmount ? `<div class="trow" style="color:var(--danger)"><span>Refunded · ${esc(o.refundReason || '')}</span><span class="money">−${money(o.refundAmount)}</span></div>` : ''}
       </div>
+      <div class="invoice-row">
+        <input id="invoiceTo" placeholder="Customer name on invoice (optional)" autocomplete="off" autocapitalize="words" aria-label="Customer name on invoice">
+        <a class="btn" id="invoiceBtn" href="${invoiceUrl(o.number)}" target="_blank" rel="noopener">Invoice</a>
+      </div>
       ${o.refundAmount ? '' : `<button class="btn danger" id="refundBtn">Refund</button>`}`;
+    $('invoiceTo').addEventListener('input', () => { $('invoiceBtn').href = invoiceUrl(o.number, $('invoiceTo').value.trim()); });
     const rb = $('refundBtn');
     if (rb) rb.addEventListener('click', () => {
       $('refundNum').textContent = `#${o.number}`;

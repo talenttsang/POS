@@ -1040,6 +1040,28 @@ def refund(number):
     return jsonify(payload)
 
 
+@app.get("/invoice/<int:number>.pdf")
+@require_unlock
+def invoice_pdf(number):
+    """The sale as a PDF invoice. ?to= adds customer lines (newline separated)
+    to the billing block; without it the invoice reads 'Walk-in customer'."""
+    from invoice import build_invoice_pdf  # imported here: fpdf2 is only needed for invoices
+    bill_to = request.args.get("to", "")[:300]
+    with pool().connection() as conn:
+        t = conn.execute("select * from pos_transactions where transaction_number = %s", (number,)).fetchone()
+        if not t:
+            abort(404, "no such sale")
+        items = conn.execute(
+            "select line_no, sku, product_name, quantity, unit_price, line_total from pos_transaction_items "
+            "where transaction_id = %s order by line_no", (t["id"],)
+        ).fetchall()
+        venue = conn.execute("select name, address from pos_events where id = %s", (t["event_id"],)).fetchone() if t["event_id"] else None
+    pdf = build_invoice_pdf(t, items, venue, bill_to)
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="invoice-{number}.pdf"',
+                             "Cache-Control": "private, no-store"})
+
+
 @app.get("/api/summary")
 @require_unlock
 def summary():
