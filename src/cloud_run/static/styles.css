@@ -1,6 +1,7 @@
 :root {
   --bg: #f4f5f7; --panel: #fff; --ink: #14171a; --muted: #5f666d; --line: #e3e6ea;
   --accent: #14171a; --ok: #1a7f37; --warn: #b54708; --danger: #c62828; --chip: #e9ebee;
+  --brand: #fc6c62; --blush: #ffedea;
   --radius: 12px; --rail: 76px;
   font-family: Inter, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
 }
@@ -15,7 +16,8 @@ input { font: inherit; color: inherit; }
 /* Shell */
 .app { display: grid; grid-template-columns: var(--rail) 1fr; grid-template-rows: 56px 1fr; height: 100vh; }
 .rail { grid-row: 1 / 3; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 6px; }
-.brand { width: 48px; height: 44px; border-radius: 12px; background: var(--ink); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 12px; letter-spacing: .02em; margin-bottom: 10px; }
+.brand { width: 48px; height: 44px; border-radius: 12px; background: var(--blush); display: grid; place-items: center; margin-bottom: 10px; }
+.brand img { display: block; width: 30px; height: 30px; }
 .nav-btn { width: 60px; padding: 10px 0 8px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
 .nav-btn svg { width: 22px; height: 22px; }
 .nav-btn.on { background: var(--chip); color: var(--ink); font-weight: 600; }
@@ -148,6 +150,9 @@ input { font: inherit; color: inherit; }
 .lock { position: fixed; inset: 0; background: var(--bg); display: grid; place-items: center; z-index: 40; }
 .lock .box { width: min(400px, 92vw); background: var(--panel); border-radius: 18px; padding: 28px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 10px 40px rgba(0,0,0,.08); }
 .lock h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.lock h1.logo { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 4px 0 2px; }
+.lock h1.logo img { display: block; width: 240px; height: auto; max-width: 100%; }
+.lock h1.logo span { font-size: 15px; font-weight: 600; color: var(--muted); letter-spacing: 0; }
 .lock input { height: 50px; border: 1px solid var(--line); border-radius: 10px; padding: 0 14px; font-size: 18px; }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 12px 18px; border-radius: 10px; font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s; z-index: 50; pointer-events: none; max-width: 90vw; }
 .toast.on { opacity: 1; }

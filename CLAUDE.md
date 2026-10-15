@@ -1,4 +1,4 @@
-# GenC Beauty POS – Agent Instructions
+# Pikumi POS – Agent Instructions
 
 ## Agent Behavior
 

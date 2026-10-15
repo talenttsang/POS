@@ -1,4 +1,4 @@
-"""GenC Beauty POS: the cash register for the ESI Montreal booth.
+"""Pikumi POS: the cash register for the Pikumi K-Beauty Outlets stores.
 
 Serves the register page (static/), the admin portal (/admin) and a JSON API
 over the Supabase Postgres database. Cash sales only. Every sale is written as

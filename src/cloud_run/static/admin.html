@@ -4,8 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<link rel="icon" href="data:,">
-<title>GenC Beauty POS · Admin</title>
+<link rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/brand/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/brand/apple-touch-icon.png">
+<title>Pikumi POS · Admin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -13,7 +15,9 @@
 <style>
   .admin { max-width: 960px; margin: 0 auto; padding: 24px 20px 60px; display: flex; flex-direction: column; gap: 18px; }
   .admin-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .admin-head h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+  .admin-head h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; display: flex; align-items: center; gap: 10px; }
+  .admin-head h1 span { color: var(--muted); font-weight: 600; }
+  .admin-head h1 img { border-radius: 8px; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
   .panel h2 { margin: 0; font-size: 16px; }
   .form { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 10px; align-items: end; }
@@ -36,7 +40,7 @@
 
 <div class="lock" id="lock">
   <form class="box" id="loginForm">
-    <h1>GenC Beauty POS Admin</h1>
+    <h1 class="logo"><img src="/static/brand/wordmark.png" alt="Pikumi · K-Beauty Outlets" width="240" height="95"><span>Admin portal</span></h1>
     <p class="hint" id="loginHint">Sign in with an admin account, or with the master code.</p>
     <div class="tabs">
       <button type="button" class="chip on" id="tabUser">Admin account</button>
@@ -57,7 +61,7 @@
 
 <div class="admin" id="admin" hidden>
   <div class="admin-head">
-    <h1>GenC Beauty POS Admin</h1>
+    <h1 class="admin-title"><img src="/static/brand/favicon.svg" alt="" width="32" height="32">Pikumi POS <span>Admin</span></h1>
     <div class="top-right">
       <span class="pill" id="whoPill"></span>
       <a class="pill" href="/">Register</a>

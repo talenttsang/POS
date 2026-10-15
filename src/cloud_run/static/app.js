@@ -1,4 +1,4 @@
-/* GenC Beauty POS register. Plain JS, no build step.
+/* Pikumi POS register. Plain JS, no build step.
 
    The browser holds the cart; the server prices every line from the database
    and checks the totals again before writing a sale. Each sale carries a

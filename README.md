@@ -1,4 +1,4 @@
-# GenC Beauty POS
+# Pikumi POS
 
 A cash register for trade-show booths: Flask on Cloud Run, Supabase (Postgres)
 behind it, an admin portal for users, events and product uploads, and an
