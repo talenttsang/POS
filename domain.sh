@@ -25,7 +25,7 @@ have addresses $N-ip --global || g compute addresses create $N-ip --global
 have network-endpoint-groups $N-neg --region="$REGION" \
   || g compute network-endpoint-groups create $N-neg --region="$REGION" --network-endpoint-type=serverless --cloud-run-service="$SERVICE"
 have backend-services $N-backend --global \
-  || { g compute backend-services create $N-backend --global --load-balancing-scheme=EXTERNAL_MANAGED --protocol=HTTPS
+  || { g compute backend-services create $N-backend --global --load-balancing-scheme=EXTERNAL_MANAGED
        g compute backend-services add-backend $N-backend --global --network-endpoint-group=$N-neg --network-endpoint-group-region="$REGION"; }
 have url-maps $N-urlmap --global || g compute url-maps create $N-urlmap --default-service=$N-backend --global
 have ssl-certificates $N-cert --global || g compute ssl-certificates create $N-cert --domains="$DOMAIN" --global
