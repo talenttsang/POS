@@ -77,6 +77,8 @@
       <label class="event-only">Starts <input type="date" id="evStart"></label>
       <label class="event-only">Ends <input type="date" id="evEnd"></label>
       <label class="store-only" hidden>Address <input id="evAddress" placeholder="Street, city, province, postal code" autocomplete="off"></label>
+      <label class="store-only" hidden>SkuVault warehouse <input id="evSvWarehouse" placeholder="e.g. IT1" autocomplete="off"></label>
+      <label class="store-only" hidden>SkuVault location <input id="evSvLocation" placeholder="e.g. PKP" autocomplete="off"></label>
       <label>Currency <select id="evCurrency"><option>CAD</option><option>USD</option><option>EUR</option></select></label>
       <button class="btn primary" type="submit" id="evSubmit">Add event</button>
     </form>
@@ -102,6 +104,17 @@
     </form>
     <div class="err" id="csvErr"></div>
     <div id="csvResult" class="hint"></div>
+  </div>
+
+  <div class="panel" id="inventoryPanel">
+    <h2>Inventory sync</h2>
+    <div class="hint">When a store names a SkuVault warehouse and location, the register shows the on-hand quantity there, each sale removes the sold units from it, and a full refund adds them back. Every move is listed here; a failed one is retried automatically on the next sale, or now with the button.</div>
+    <div class="tabs"><button class="chip" id="invRefresh">Refresh</button><button class="chip" id="invRetry">Retry failed moves</button></div>
+    <div class="err" id="invErr"></div>
+    <table class="users">
+      <thead><tr><th>Sale</th><th>SKU</th><th>Units</th><th>Where</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody id="invRows"></tbody>
+    </table>
   </div>
 
   <div class="panel">
@@ -133,6 +146,7 @@
   <input id="esNameInput" placeholder="Name" autocomplete="off">
   <div class="row event-only"><input type="date" id="esStart" aria-label="Starts"><input type="date" id="esEnd" aria-label="Ends"></div>
   <input id="esAddress" class="store-only" placeholder="Address" autocomplete="off" hidden>
+  <div class="row store-only" hidden><input id="esSvWarehouse" placeholder="SkuVault warehouse (e.g. IT1)" autocomplete="off"><input id="esSvLocation" placeholder="SkuVault location (e.g. PKP)" autocomplete="off"></div>
   <select id="esCurrency"><option>CAD</option><option>USD</option><option>EUR</option></select>
   <div class="err" id="esErr"></div>
   <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="esSave">Save</button></div>

@@ -112,6 +112,28 @@ Service Usage Admin, and Service Account User on the Compute Engine default
 service account that the service runs as. That runtime account also needs
 Secret Manager Secret Accessor for the two secrets above.
 
+## Inventory sync with SkuVault
+
+A store can name the SkuVault warehouse and location that holds its stock
+(admin portal, store form; the Markham store is `IT1` / `PKP`). When it does:
+
+- product cards show the on-hand quantity at that location ("3 in stock",
+  "out of stock") and a cart line warns when it exceeds stock; selling is
+  not blocked;
+- each sale removes the sold units from that location with reason `Sold`,
+  and a full refund adds them back with reason `Return (Bricks & Mortar)`
+  (both must exist under SkuVault Admin > Reasons; override with
+  `SKUVAULT_REASON_OUT` / `SKUVAULT_REASON_IN`);
+- every move is a row in `pos_inventory_moves`, sent by a background worker
+  after the sale commits, so SkuVault being down never blocks a sale. Failed
+  moves are retried on the next sale or from the admin portal's Inventory
+  sync panel.
+
+Credentials are the `SKUVAULT_EMAIL` and `SKUVAULT_PASSWORD` secrets in the
+service's project. SkuVault allows about five calls a minute per endpoint, so
+stock is cached for three minutes per location and served stale when
+throttled. `src/cloud_run/skuvault.py` is the whole client.
+
 ## Custom domain
 
 `domain.sh` puts `pos.gencbeauty.com` in front of the service with a global

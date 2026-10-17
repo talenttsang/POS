@@ -195,7 +195,7 @@
   const searchProducts = async () => {
     renderSearchClear();
     const q = $('searchInput').value.trim();
-    const params = new URLSearchParams({ q, category: state.category });
+    const params = new URLSearchParams({ q, category: state.category, event: state.eventId || '' });
     state.products = await api(`/api/products?${params}`);
     renderGrid();
   };
@@ -206,10 +206,13 @@
       <button class="card" data-id="${esc(p.id)}">
         ${thumb(p, 'photo')}
         <div class="name">${esc(p.name)}</div>
-        <div class="meta"><span class="tag">${esc(p.category)}</span>${p.isSet ? '<span class="tag">set</span>' : ''}${p.isClearance ? '<span class="tag warn">clearance</span>' : ''}</div>
+        <div class="meta"><span class="tag">${esc(p.category)}</span>${p.isSet ? '<span class="tag">set</span>' : ''}${p.isClearance ? '<span class="tag warn">clearance</span>' : ''}${stockTag(p.stock)}</div>
         <div class="price money">${money(p.price)}</div>
       </button>`).join('');
   };
+
+  // On-hand quantity at this store's SkuVault location; null when the store has none.
+  const stockTag = (n) => (n == null ? '' : n <= 0 ? '<span class="tag out">out of stock</span>' : `<span class="tag stock">${n} in stock</span>`);
 
   // Product photo, or a neutral placeholder with the first letters of the name.
   // A photo that fails to load falls back to the placeholder (onerror).
@@ -326,7 +329,7 @@
     $('cartCount').textContent = `${count} item${count === 1 ? '' : 's'}`;
     $('cartLines').innerHTML = state.cart.length ? state.cart.map((l) => `
       <div class="line" data-id="${esc(l.product.id)}">
-        <div class="line-main">${thumb(l.product, 'mini')}<div><div class="n">${esc(l.product.name)}</div><div class="s">${esc(l.product.category)} · ${money(l.product.price)} each</div></div></div>
+        <div class="line-main">${thumb(l.product, 'mini')}<div><div class="n">${esc(l.product.name)}</div><div class="s">${esc(l.product.category)} · ${money(l.product.price)} each${l.product.stock != null && l.qty > l.product.stock ? ` · <b class="short">only ${l.product.stock} in stock</b>` : ''}</div></div></div>
         <div class="amt money">${money(Number(l.product.price) * l.qty)}</div>
         <div class="qty">
           <button data-step="-1" aria-label="Less">−</button><span>${l.qty}</span><button data-step="1" aria-label="More">+</button>
@@ -485,6 +488,7 @@
     $('discountInput').value = '';
     renderCart();
     go('done');
+    searchProducts().catch(() => {});
   };
   $('newSaleBtn').addEventListener('click', () => go('sell'));
 

@@ -40,6 +40,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from functools import wraps
 
 import psycopg
+import skuvault
 from flask import Flask, Response, abort, jsonify, request, send_from_directory, session
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -90,6 +91,7 @@ def access_code():
 # The Flask session cookie is signed with a key derived from the database URL,
 # so it survives restarts and is the same across instances.
 _db_url = secret("SUPABASE_DB_URL", ttl=3600)
+SV = skuvault.Client(lambda name: secret(name, ttl=3600))
 app.secret_key = hashlib.sha256(("pos-session:" + (_db_url or uuid.uuid4().hex)).encode()).digest()
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   SESSION_COOKIE_SECURE=os.environ.get("K_SERVICE") is not None,
@@ -238,6 +240,7 @@ def serialise_event(e):
             "address": e.get("address"),
             "startsOn": e["starts_on"].isoformat() if e.get("starts_on") else None,
             "endsOn": e["ends_on"].isoformat() if e.get("ends_on") else None,
+            "svWarehouse": e.get("sv_warehouse"), "svLocation": e.get("sv_location"),
             "currency": e["currency"], "isActive": e["is_active"]}
 
 
@@ -314,6 +317,10 @@ def event_fields(body, creating):
             fields[col] = date.fromisoformat(v)
     if "address" in body:
         fields["address"] = re.sub(r"\s+", " ", str(body.get("address") or "")).strip()[:200] or None
+    for key, col in (("svWarehouse", "sv_warehouse"), ("svLocation", "sv_location")):
+        if key in body:
+            v = re.sub(r"[^A-Za-z0-9_\-\[\]]", "", str(body.get(key) or "")).upper()[:40]
+            fields[col] = v or None
     if creating:
         fields["kind"] = MODE
     if "currency" in body or creating:
@@ -325,6 +332,13 @@ def event_fields(body, creating):
         fields["is_active"] = bool(body["isActive"])
     if fields.get("starts_on") and fields.get("ends_on") and fields["ends_on"] < fields["starts_on"]:
         abort(400, "end date is before start date")
+    if bool(fields.get("sv_warehouse")) != bool(fields.get("sv_location")):
+        abort(400, "give both the SkuVault warehouse and location, or neither")
+    if fields.get("sv_warehouse"):
+        try:
+            SV.warehouse_id(fields["sv_warehouse"])
+        except skuvault.SkuVaultError as exc:
+            abort(400, str(exc))
     return fields
 
 
@@ -845,7 +859,20 @@ def products():
         "case when p.category = 'Clearance' or p.is_clearance then p.price end, p.name limit 300",
         params,
     )
-    return jsonify([serialise_product(r) for r in rows])
+    stock = venue_stock(event_from_request(required=False))
+    return jsonify([serialise_product(r, stock) for r in rows])
+
+
+def venue_stock(event):
+    """{sku: on hand} at the venue's SkuVault location, or None when the venue
+    has no location or SkuVault cannot be reached right now."""
+    if not event or not event.get("sv_location"):
+        return None
+    try:
+        return SV.stock(event["sv_warehouse"], event["sv_location"])
+    except skuvault.SkuVaultError as exc:
+        app.logger.warning("stock unavailable: %s", exc)
+        return None
 
 
 @app.get("/api/categories")
@@ -869,14 +896,15 @@ def by_barcode(code):
                     (code.strip(),), one=True)
     if not row:
         abort(404, "no product with that barcode")
-    return jsonify(serialise_product(row))
+    return jsonify(serialise_product(row, venue_stock(event_from_request(required=False))))
 
 
-def serialise_product(r):
+def serialise_product(r, stock=None):
     return {
         "id": str(r["id"]), "sku": r["sku"], "name": r["name"], "category": r["category"],
         "price": str(r["price"]), "isSet": r["is_set"], "isClearance": r["is_clearance"], "showQty": r["show_qty"],
         "image": r.get("image_url"),
+        "stock": None if stock is None else stock.get(r["sku"], 0),
     }
 
 
@@ -954,8 +982,95 @@ def create_sale():
                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (txn["id"], l["line_no"], p["sku"], p["name"], p["category"], l["quantity"], l["unit_price"], p["id"], l["barcode"]),
                 )
+            queue_moves(conn, txn, event, "out",
+                        [{"line_no": l["line_no"], "sku": l["product"]["sku"], "quantity": l["quantity"]} for l in lines])
             payload = sale_payload(conn, txn)
+    start_move_worker()
     return jsonify(payload), 201
+
+
+# ---------------------------------------------------------------------------
+# Inventory sync: each sale line leaves the venue's SkuVault location, and a
+# full refund puts it back. Moves are rows first, then sent by a worker, so a
+# SkuVault outage never blocks a sale and a failed call can be retried.
+# ---------------------------------------------------------------------------
+_move_lock = threading.Lock()
+MOVE_ATTEMPTS = 5
+# SkuVault only accepts reasons defined under Admin > Reasons in the account.
+REASON_OUT = os.environ.get("SKUVAULT_REASON_OUT", "Sold")
+REASON_IN = os.environ.get("SKUVAULT_REASON_IN", "Return (Bricks & Mortar)")
+
+
+def queue_moves(conn, txn, event, direction, lines):
+    if not event or not event.get("sv_location"):
+        return
+    for l in lines:
+        conn.execute(
+            """insert into pos_inventory_moves (transaction_id, line_no, sku, quantity, direction, warehouse, location)
+               values (%s, %s, %s, %s, %s, %s, %s) on conflict (transaction_id, line_no, direction) do nothing""",
+            (txn["id"], l["line_no"], l["sku"], l["quantity"], direction, event["sv_warehouse"], event["sv_location"]),
+        )
+        # Reflect it in the register straight away; the worker confirms with SkuVault.
+        SV.adjust(event["sv_warehouse"], event["sv_location"], l["sku"], -l["quantity"] if direction == "out" else l["quantity"])
+
+
+def start_move_worker():
+    threading.Thread(target=process_moves, daemon=True).start()
+
+
+def process_moves():
+    """Send every pending or retryable move, one SkuVault call per sale and direction."""
+    if not _move_lock.acquire(blocking=False):
+        return {"skipped": "already running"}
+    done = failed = 0
+    try:
+        with pool().connection() as conn:
+            rows = conn.execute(
+                """select m.*, t.transaction_number from pos_inventory_moves m join pos_transactions t on t.id = m.transaction_id
+                   where m.status <> 'ok' and m.attempts < %s order by m.created_at""", (MOVE_ATTEMPTS,)
+            ).fetchall()
+            groups = {}
+            for r in rows:
+                groups.setdefault((r["transaction_id"], r["direction"], r["warehouse"], r["location"]), []).append(r)
+            for (txn_id, direction, wh, loc), group in groups.items():
+                number = group[0]["transaction_number"]
+                note = f"POS sale #{number}" if direction == "out" else f"POS refund of sale #{number}"
+                ids = [r["id"] for r in group]
+                try:
+                    resp = SV.move(direction, wh, loc, [{"sku": r["sku"], "quantity": r["quantity"], "note": note} for r in group],
+                                   REASON_OUT if direction == "out" else REASON_IN)
+                    conn.execute("update pos_inventory_moves set status = 'ok', attempts = attempts + 1, last_error = null, response = %s, "
+                                 "done_at = now(), updated_at = now() where id = any(%s)", (json.dumps(resp)[:2000], ids))
+                    done += len(ids)
+                except skuvault.SkuVaultError as exc:
+                    app.logger.warning("inventory move failed for sale #%s: %s", number, exc)
+                    conn.execute("update pos_inventory_moves set status = 'failed', attempts = attempts + 1, last_error = %s, "
+                                 "updated_at = now() where id = any(%s)", (str(exc)[:500], ids))
+                    failed += len(ids)
+                conn.commit()
+    except Exception as exc:  # the worker must never take the request thread down
+        app.logger.exception("inventory worker: %s", exc)
+    finally:
+        _move_lock.release()
+    return {"sent": done, "failed": failed}
+
+
+@app.get("/api/admin/inventory")
+@require_admin
+def admin_inventory():
+    rows = query(
+        """select m.id, t.transaction_number as sale, m.line_no, m.sku, m.quantity, m.direction, m.warehouse, m.location,
+                  m.status, m.attempts, m.last_error, m.created_at, m.done_at
+           from pos_inventory_moves m join pos_transactions t on t.id = m.transaction_id
+           order by (m.status = 'ok'), m.created_at desc limit 200""")
+    return jsonify([{**r, "created_at": r["created_at"].isoformat(), "done_at": r["done_at"].isoformat() if r["done_at"] else None} for r in rows])
+
+
+@app.post("/api/admin/inventory/retry")
+@require_admin
+def admin_inventory_retry():
+    query("update pos_inventory_moves set attempts = 0, updated_at = now() where status = 'failed' returning id")
+    return jsonify(process_moves())
 
 
 def sale_payload(conn, txn):
@@ -1036,7 +1151,13 @@ def refund(number):
                    where id = %s returning *""",
                 (amount, reason, approver, full, t["id"]),
             ).fetchone()
+            if full:
+                event = conn.execute("select * from pos_events where id = %s", (t["event_id"],)).fetchone() if t["event_id"] else None
+                items = conn.execute("select line_no, sku, quantity from pos_transaction_items where transaction_id = %s", (t["id"],)).fetchall()
+                queue_moves(conn, t, event, "in", items)
             payload = sale_payload(conn, t)
+    if full:
+        start_move_worker()
     return jsonify(payload)
 
 
