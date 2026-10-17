@@ -19,7 +19,7 @@ gcloud run deploy "$SERVICE" \
   --region "$REGION" \
   --project "$PROJECT" \
   --allow-unauthenticated \
-  --set-secrets "SUPABASE_DB_URL=SUPABASE_DB_URL:latest" \
+  --set-secrets "SUPABASE_DB_URL=SUPABASE_DB_URL:latest,SKUVAULT_EMAIL=projects/304363458561/secrets/SKUVAULT_EMAIL:latest,SKUVAULT_PASSWORD=projects/304363458561/secrets/SKUVAULT_PASSWORD:latest" \
   --set-env-vars "GCP_PROJECT=$PROJECT,POS_MODE=${POS_MODE:-store}" \
   --min-instances 0 \
   --max-instances 3 \
