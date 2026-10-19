@@ -23,13 +23,16 @@ class CloverError(Exception):
 class Client:
     def __init__(self, get_secret):
         self.base = os.environ.get("CLOVER_PROXY_URL", DEFAULT_URL).rstrip("/")
-        self.origin = os.environ.get("CLOVER_ORIGIN", "https://pos.gencbeauty.com")
+        # Server-to-server: no Origin unless one is configured (the proxy's CORS layer
+        # answers 500 to an origin it does not list).
+        self.origin = os.environ.get("CLOVER_ORIGIN")
         self.sandbox = os.environ.get("CLOVER_SANDBOX") == "1"
         self._get_secret = get_secret
 
     def _headers(self, extra=None):
-        h = {"Content-Type": "application/json", "Accept": "application/json", "Origin": self.origin,
-             "User-Agent": "genc-pos/1.0"}
+        h = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "genc-pos/1.0"}
+        if self.origin:
+            h["Origin"] = self.origin
         secret = self._get_secret("CLOVER_PROXY_SECRET")
         if secret:
             h[os.environ.get("CLOVER_PROXY_SECRET_HEADER", "x-proxy-secret")] = secret
@@ -58,6 +61,17 @@ class Client:
         r = self._call("GET", "/api/get-clover-devices", params={"storehash": store})
         return r if isinstance(r, list) else r.get("devices") or r.get("data") or r
 
+    def roster(self, store):
+        """[{merchant_id, store, device_id}] the proxy holds for a store key."""
+        r = self._call("GET", "/clover/token-by-store", params={"store": store})
+        return r if isinstance(r, list) else []
+
+    def device_for(self, store):
+        for row in self.roster(store):
+            if row.get("device_id"):
+                return row["device_id"]
+        return None
+
     def charges_by_order(self, store, order_id):
         r = self._call("GET", "/clover/charges-by-order", params={"order_id": order_id, "store": store, "storehash": store})
         return r
@@ -67,7 +81,9 @@ class Client:
         """Start a charge on the reader and wait for the customer. Returns
         (outcome, payment_id, message, raw) with outcome paid | failed | unknown."""
         path = "/api/clover/send-payment-sandbox" if self.sandbox else "/api/clover/send-payment"
-        body = {"device": device, "amount": int(amount_minor), "storehash": store, "orderId": order_id}
+        body = {"amount": int(amount_minor), "storehash": store, "orderId": order_id}
+        if device:
+            body["device"] = device
         if note:
             body["note"] = note
         try:

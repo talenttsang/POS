@@ -137,7 +137,7 @@
       const state = !e.isActive ? ['refunded', 'Archived'] : e.kind === 'store' ? ['', 'Open'] : (e.startsOn <= t && t <= e.endsOn) ? ['', 'Running'] : e.startsOn > t ? ['partial', 'Upcoming'] : ['', 'Past'];
       return `<tr class="${e.isActive ? '' : 'inactive'}" data-id="${esc(e.id)}">
         <td><b>${esc(e.name)}</b><div class="hint">${esc(e.code)}</div></td>
-        <td>${e.kind === 'store' ? `${esc(e.address || '')}${e.svLocation ? `<div class="hint">SkuVault ${esc(e.svWarehouse)} / ${esc(e.svLocation)}</div>` : ''}${e.cloverDevice ? `<div class="hint">Clover Flex ${esc(e.cloverDevice)} · ${esc(e.cloverStore)}</div>` : ''}` : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
+        <td>${e.kind === 'store' ? `${esc(e.address || '')}${e.svLocation ? `<div class="hint">SkuVault ${esc(e.svWarehouse)} / ${esc(e.svLocation)}</div>` : ''}${e.cloverStore ? `<div class="hint">Clover ${esc(e.cloverStore)}${e.cloverDevice ? ` · Flex ${esc(e.cloverDevice)}` : ''}</div>` : ''}` : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
         <td>${esc(e.currency)}</td>
         <td><span class="status ${state[0]}">${state[1]}</span></td>
         <td class="actions">

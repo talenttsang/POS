@@ -136,9 +136,10 @@ throttled. `src/cloud_run/skuvault.py` is the whole client.
 
 ## Card payments on a Clover Flex
 
-A store can name the Clover store key and the serial of its Clover Flex
-(admin portal, store form; "Find" lists the readers the proxy knows for a
-key). The register then shows a **Card** button next to **Cash**:
+A store names the Clover store key the proxy knows it by (admin portal,
+store form; the Markham store is `pikumi`). The Flex serial is optional: the
+proxy keeps a reader per store key, and the register uses that one unless a
+serial is given. The register then shows a **Card** button next to **Cash**:
 
 1. `POST /api/card/charge` writes a `pos_card_payments` row and asks the
    company's Clover proxy (`CLOVER_PROXY_URL`, default the EC2 host) to start

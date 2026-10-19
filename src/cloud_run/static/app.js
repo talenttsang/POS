@@ -339,11 +339,11 @@
     const t = cartTotals();
     $('cartTotals').innerHTML = totalsHtml(t);
     $('chargeBtn').disabled = !state.cart.length;
-    const flex = !!(currentEvent() && currentEvent().cloverDevice);
+    const flex = !!(currentEvent() && currentEvent().cloverStore);
     $('cardBtn').hidden = !flex;
     $('cardBtn').disabled = !state.cart.length || cartTotals().total <= 0;
     if (flex) { $('cardBtn').textContent = state.cart.length ? `Card ${money(cartTotals().total)}` : 'Card'; }
-    $('chargeBtn').textContent = state.cart.length ? `${currentEvent() && currentEvent().cloverDevice ? 'Cash' : 'Charge'} ${money(t.total)}` : 'Charge';
+    $('chargeBtn').textContent = state.cart.length ? `${currentEvent() && currentEvent().cloverStore ? 'Cash' : 'Charge'} ${money(t.total)}` : 'Charge';
   };
 
   $('cartLines').addEventListener('click', (e) => {

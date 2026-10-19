@@ -340,8 +340,8 @@ def event_fields(body, creating):
         abort(400, "end date is before start date")
     if bool(fields.get("sv_warehouse")) != bool(fields.get("sv_location")):
         abort(400, "give both the SkuVault warehouse and location, or neither")
-    if bool(fields.get("clover_store")) != bool(fields.get("clover_device")):
-        abort(400, "give both the Clover store key and device serial, or neither")
+    if fields.get("clover_device") and not (fields.get("clover_store") or body.get("cloverStore")):
+        abort(400, "a Clover device needs a Clover store key")
     if fields.get("sv_warehouse"):
         try:
             SV.warehouse_id(fields["sv_warehouse"])
@@ -1028,8 +1028,8 @@ def card_charge():
     body = request.get_json(silent=True) or {}
     record_id = record_id_of(body)
     event = event_from_request()
-    if not event.get("clover_device"):
-        abort(400, f"this {VENUE} has no Clover Flex set up")
+    if not event.get("clover_store"):
+        abort(400, f"this {VENUE} has no Clover store key set up")
     lines = build_lines(body.get("items") or [])
     subtotal, discount, grand = totals(lines, body.get("discount"))
     if grand <= 0:
@@ -1043,7 +1043,7 @@ def card_charge():
             row = conn.execute(
                 """insert into pos_card_payments (client_record_id, event_id, amount, currency, store_key, device, staff_name, cart)
                    values (%s, %s, %s, %s, %s, %s, %s, %s) returning *""",
-                (record_id, event["id"], grand, event["currency"], event["clover_store"], event["clover_device"],
+                (record_id, event["id"], grand, event["currency"], event["clover_store"], event.get("clover_device"),
                  session.get("staff"), json.dumps(cart)),
             ).fetchone()
             conn.commit()
@@ -1059,7 +1059,17 @@ def run_card_charge(record_id, staff, user_id):
         with pool().connection() as conn:
             row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
         note = f"POS sale {record_id}"
-        outcome, pid, message, raw = CLV.send_payment(row["store_key"], row["device"], int(round(float(row["amount"]) * 100)), record_id, note)
+        device = row["device"]
+        if not device:
+            # The proxy keeps the Flex for each store key; use its roster so the request names a reader.
+            try:
+                device = CLV.device_for(row["store_key"])
+            except clover.CloverError as exc:
+                app.logger.warning("card charge %s: roster lookup failed: %s", record_id, exc)
+            if device:
+                with pool().connection() as conn:
+                    conn.execute("update pos_card_payments set device = %s where id = %s", (device, row["id"])); conn.commit()
+        outcome, pid, message, raw = CLV.send_payment(row["store_key"], device, int(round(float(row["amount"]) * 100)), record_id, note)
         settle_card(record_id, outcome, pid, message, raw, staff, user_id)
     except Exception as exc:  # never let a thread die silently
         app.logger.exception("card charge %s: %s", record_id, exc)
