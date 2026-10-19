@@ -92,6 +92,14 @@ class Client:
                 return row["device_id"]
         return None
 
+    def charge_for(self, store, ref):
+        """The proxy's own record of a charge by our reference: {"status": "PAID", "payment_id": ...} or None."""
+        r = self._call("GET", "/clover/charges-by-order", params={"order_id": ref, "store": store})
+        for row in r if isinstance(r, list) else []:
+            if isinstance(row, dict) and str(row.get("order_id")) == str(ref):
+                return row
+        return None
+
     def payment_status(self, store, ref, amount_minor):
         """Did this attempt complete on Clover? {"paid": bool, "paymentId", "cloverOrderId"}."""
         r = self._call("GET", "/api/clover/payment-status",
@@ -117,10 +125,14 @@ class Client:
             return "unknown", None, str(exc), None
         return self._outcome(r)
 
-    def refund(self, store, payment_id, amount_minor, ref):
-        body = {"storehash": self.storehash, "branch": store, "store": store, "paymentId": payment_id,
-                "amount": int(amount_minor), "orderId": ref}
-        r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{ref}"}, timeout=120)
+    def refund(self, store, device, payment_id, amount_minor, ref):
+        """Refund to the original card. The body is exactly what superhairpieces-pos
+        sends (convex/lib/refundMoney.ts cardRefundRequestSchema): paymentId,
+        storeHash, amount in minor units, deviceId, branch. The proxy wakes the
+        reader before refunding, so this can take a while."""
+        body = {"paymentId": payment_id, "storeHash": self.storehash or store, "amount": int(amount_minor),
+                "deviceId": device, "branch": store}
+        r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{ref}"}, timeout=170)
         # The refund reply is not shaped like a payment: any 200 from the route is a
         # refund Clover accepted; anything else carries Clover's reason.
         if not isinstance(r, dict):
@@ -134,7 +146,8 @@ class Client:
             msg = data.get("message") if isinstance(data, dict) else (str(data or r.get("error") or ""))
             raise CloverError(msg or f"Clover returned {code}")
         d = data if isinstance(data, dict) else {}
-        rid = d.get("id") or (d.get("refund") or {}).get("id") if isinstance(d.get("refund"), dict) else d.get("id")
+        refund = d.get("refund") if isinstance(d.get("refund"), dict) else {}
+        rid = r.get("refundReference") or refund.get("id") or d.get("id")
         return rid, r
 
     @staticmethod

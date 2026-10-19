@@ -1085,11 +1085,20 @@ def run_card_charge(record_id, staff, user_id):
 def verify_card(row, amount_minor, message, raw, attempts=1, wait=0):
     """Poll the proxy's payment-status for this attempt. Paid wins; otherwise the
     attempt is failed (the terminal cancelled or declined it) and can be retried."""
+    ref = clover.clover_ref(row["id"])
     for i in range(attempts):
+        # The proxy's charge record is the surest sign; payment-status is the helper's check.
         try:
-            status = CLV.payment_status(row["store_key"], clover.clover_ref(row["id"]), amount_minor)
+            charge = CLV.charge_for(row["store_key"], ref)
         except clover.CloverError as exc:
-            app.logger.warning("payment-status for %s: %s", row["client_record_id"], exc)
+            app.logger.warning("charges-by-order for %s: %s", ref, exc)
+            charge = None
+        if charge and str(charge.get("status", "")).upper() == "PAID" and charge.get("payment_id"):
+            return "paid", charge["payment_id"], None, {"sent": raw, "charge": charge}
+        try:
+            status = CLV.payment_status(row["store_key"], ref, amount_minor)
+        except clover.CloverError as exc:
+            app.logger.warning("payment-status for %s: %s", ref, exc)
             status = None
         if status and status.get("paid"):
             return "paid", status.get("paymentId"), None, {"sent": raw, "status": status}
@@ -1332,7 +1341,8 @@ def refund(number):
                 if not cp or not cp["clover_payment_id"]:
                     abort(409, "no Clover payment is recorded for this sale")
                 try:
-                    CLV.refund(cp["store_key"], cp["clover_payment_id"], int(round(float(amount) * 100)), clover.clover_ref(cp["id"]))
+                    CLV.refund(cp["store_key"], cp["device"] or CLV.device_for(cp["store_key"]), cp["clover_payment_id"],
+                               int(round(float(amount) * 100)), clover.clover_ref(cp["id"]))
                 except clover.CloverError as exc:
                     abort(502, f"Clover refund failed: {exc}")
                 method = "card"
