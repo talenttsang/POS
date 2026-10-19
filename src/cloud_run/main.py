@@ -1058,7 +1058,7 @@ def run_card_charge(record_id, staff, user_id):
     try:
         with pool().connection() as conn:
             row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
-        note = f"POS sale {record_id}"
+        note = f"Pikumi POS {clover.clover_ref(row['id'])}"
         device = row["device"]
         if not device:
             # The proxy keeps the Flex for each store key; use its roster so the request names a reader.
@@ -1070,7 +1070,7 @@ def run_card_charge(record_id, staff, user_id):
                 with pool().connection() as conn:
                     conn.execute("update pos_card_payments set device = %s where id = %s", (device, row["id"])); conn.commit()
         amount_minor = int(round(float(row["amount"]) * 100))
-        outcome, pid, message, raw = CLV.send_payment(row["store_key"], device, amount_minor, record_id, note)
+        outcome, pid, message, raw = CLV.send_payment(row["store_key"], device, amount_minor, clover.clover_ref(row["id"]), record_id, note)
         if outcome == "unknown":
             # As the helper does: a 500 or a lost reply may hide a completed charge. Ask before giving up.
             outcome, pid, message, raw = verify_card(row, amount_minor, message, raw, attempts=3, wait=3)
@@ -1087,7 +1087,7 @@ def verify_card(row, amount_minor, message, raw, attempts=1, wait=0):
     attempt is failed (the terminal cancelled or declined it) and can be retried."""
     for i in range(attempts):
         try:
-            status = CLV.payment_status(row["store_key"], row["client_record_id"], amount_minor, row["client_record_id"])
+            status = CLV.payment_status(row["store_key"], clover.clover_ref(row["id"]), amount_minor)
         except clover.CloverError as exc:
             app.logger.warning("payment-status for %s: %s", row["client_record_id"], exc)
             status = None
@@ -1330,7 +1330,7 @@ def refund(number):
                 if not cp or not cp["clover_payment_id"]:
                     abort(409, "no Clover payment is recorded for this sale")
                 try:
-                    CLV.refund(cp["store_key"], cp["clover_payment_id"], int(round(float(amount) * 100)), cp["client_record_id"])
+                    CLV.refund(cp["store_key"], cp["clover_payment_id"], int(round(float(amount) * 100)), clover.clover_ref(cp["id"]))
                 except clover.CloverError as exc:
                     abort(502, f"Clover refund failed: {exc}")
                 method = "card"

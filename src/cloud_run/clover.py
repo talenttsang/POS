@@ -21,11 +21,12 @@ class CloverError(Exception):
     pass
 
 
-def clover_ref(record_id):
-    """Clover caps externalPaymentId (and the order reference) at 32 characters.
-    The register's per-attempt id is a UUID: without its dashes it is exactly 32
-    and still unique per attempt."""
-    return re.sub(r"[^A-Za-z0-9]", "", str(record_id))[:32]
+def clover_ref(row_id):
+    """Clover caps externalReferenceId at 12 characters and externalPaymentId at
+    32, and refuses an externalPaymentId it has seen before. One attempt is one
+    pos_card_payments row, so its row number makes a short reference that is new
+    for every attempt: POS123."""
+    return f"POS{int(row_id)}"
 
 
 class Client:
@@ -91,36 +92,35 @@ class Client:
                 return row["device_id"]
         return None
 
-    def payment_status(self, store, order_id, amount_minor, payment_ref):
+    def payment_status(self, store, ref, amount_minor):
         """Did this attempt complete on Clover? {"paid": bool, "paymentId", "cloverOrderId"}."""
         r = self._call("GET", "/api/clover/payment-status",
-                       params={"storehash": self.storehash, "orderId": clover_ref(order_id), "branch": store,
-                               "amount": int(amount_minor), "paymentRef": clover_ref(payment_ref)})
+                       params={"storehash": self.storehash, "orderId": ref, "branch": store,
+                               "amount": int(amount_minor), "paymentRef": ref})
         return r if isinstance(r, dict) else {"paid": False}
 
     # -- money --------------------------------------------------------------
-    def send_payment(self, store, device, amount_minor, order_id, note=""):
+    def send_payment(self, store, device, amount_minor, ref, idempotency_key, note=""):
         """Start a charge on the reader and wait for the customer. Returns
         (outcome, payment_id, message, raw) with outcome paid | failed | unknown."""
         path = "/api/clover/send-payment-sandbox" if self.sandbox else "/api/clover/send-payment"
         # The same body the front-desk helper sends: branch picks the Clover token and
         # reader on the proxy; paymentRef is Clover's externalPaymentId and must be new
         # for every attempt, which our per-attempt record id is.
-        ref = clover_ref(order_id)
         body = {"device": device, "amount": int(amount_minor), "storehash": self.storehash,
                 "orderId": ref, "branch": store, "store": store, "paymentRef": ref}
         if note:
             body["note"] = note
         try:
-            r = self._call("POST", path, body, headers={"Idempotency-Key": order_id}, timeout=180)
+            r = self._call("POST", path, body, headers={"Idempotency-Key": idempotency_key}, timeout=180)
         except CloverError as exc:
             return "unknown", None, str(exc), None
         return self._outcome(r)
 
-    def refund(self, store, payment_id, amount_minor, order_id):
+    def refund(self, store, payment_id, amount_minor, ref):
         body = {"storehash": self.storehash, "branch": store, "store": store, "paymentId": payment_id,
-                "amount": int(amount_minor), "orderId": clover_ref(order_id)}
-        r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{order_id}"}, timeout=120)
+                "amount": int(amount_minor), "orderId": ref}
+        r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{ref}"}, timeout=120)
         outcome, rid, message, raw = self._outcome(r)
         if outcome != "paid":
             raise CloverError(message or "refund failed")
