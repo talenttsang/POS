@@ -27,6 +27,9 @@ class Client:
         # answers 500 to an origin it does not list).
         self.origin = os.environ.get("CLOVER_ORIGIN")
         self.sandbox = os.environ.get("CLOVER_SANDBOX") == "1"
+        # The proxy also takes the BigCommerce store hash the other registers send
+        # (it selects the merchant alongside the branch). Blank unless configured.
+        self.storehash = os.environ.get("CLOVER_STOREHASH", "")
         self._get_secret = get_secret
 
     def _headers(self, extra=None):
@@ -58,45 +61,45 @@ class Client:
 
     # -- lookups ------------------------------------------------------------
     def devices(self, store):
-        r = self._call("GET", "/api/get-clover-devices", params={"storehash": store})
-        return r if isinstance(r, list) else r.get("devices") or r.get("data") or r
+        r = self._call("GET", "/api/get-clover-devices", params={"storehash": self.storehash, "store": store})
+        return r.get("elements") if isinstance(r, dict) else r
 
     def roster(self, store):
-        """[{merchant_id, store, device_id}] the proxy holds for a store key."""
+        """[{merchant_id, store, device_id}] the proxy holds for a branch key."""
         r = self._call("GET", "/clover/token-by-store", params={"store": store})
         return r if isinstance(r, list) else []
 
     def device_for(self, store):
+        """The Flex serial for a branch: the device list first (what the helper
+        uses), the token roster as a fallback."""
+        try:
+            for d in self.devices(store) or []:
+                if d.get("serial"):
+                    return d["serial"]
+        except CloverError:
+            pass
         for row in self.roster(store):
             if row.get("device_id"):
                 return row["device_id"]
         return None
 
-    def merchant_for(self, store):
-        for row in self.roster(store):
-            if row.get("merchant_id"):
-                return row["merchant_id"]
-        return None
-
-    def charges_by_order(self, store, order_id):
-        r = self._call("GET", "/clover/charges-by-order", params={"order_id": order_id, "store": store})
-        return r
+    def payment_status(self, store, order_id, amount_minor, payment_ref):
+        """Did this attempt complete on Clover? {"paid": bool, "paymentId", "cloverOrderId"}."""
+        r = self._call("GET", "/api/clover/payment-status",
+                       params={"storehash": self.storehash, "orderId": order_id, "branch": store,
+                               "amount": int(amount_minor), "paymentRef": payment_ref})
+        return r if isinstance(r, dict) else {"paid": False}
 
     # -- money --------------------------------------------------------------
     def send_payment(self, store, device, amount_minor, order_id, note=""):
         """Start a charge on the reader and wait for the customer. Returns
         (outcome, payment_id, message, raw) with outcome paid | failed | unknown."""
         path = "/api/clover/send-payment-sandbox" if self.sandbox else "/api/clover/send-payment"
-        body = {"amount": int(amount_minor), "store": store, "orderId": order_id, "order_id": order_id}
-        if device:
-            # The proxy's roster calls it device_id; its sandbox route reads device. Send every spelling.
-            body.update({"device": device, "device_id": device, "deviceId": device})
-        try:
-            merchant = self.merchant_for(store)
-        except CloverError:
-            merchant = None
-        if merchant:
-            body.update({"merchant_id": merchant, "merchantId": merchant})
+        # The same body the front-desk helper sends: branch picks the Clover token and
+        # reader on the proxy; paymentRef is Clover's externalPaymentId and must be new
+        # for every attempt, which our per-attempt record id is.
+        body = {"device": device, "amount": int(amount_minor), "storehash": self.storehash,
+                "orderId": order_id, "branch": store, "store": store, "paymentRef": order_id}
         if note:
             body["note"] = note
         try:
@@ -106,7 +109,8 @@ class Client:
         return self._outcome(r)
 
     def refund(self, store, payment_id, amount_minor, order_id):
-        body = {"store": store, "paymentId": payment_id, "amount": int(amount_minor), "orderId": order_id}
+        body = {"storehash": self.storehash, "branch": store, "store": store, "paymentId": payment_id,
+                "amount": int(amount_minor), "orderId": order_id}
         r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{order_id}"}, timeout=120)
         outcome, rid, message, raw = self._outcome(r)
         if outcome != "paid":
@@ -115,20 +119,23 @@ class Client:
 
     @staticmethod
     def _outcome(r):
-        status = r.get("status") if isinstance(r, dict) else None
-        data = r.get("data") if isinstance(r, dict) else r
+        """Read the proxy's envelope the way the front-desk helper does: status 200
+        with data.payment.result == SUCCESS is paid; status 500 is "cancelled on the
+        terminal" but may hide a completed charge, so it stays unknown until
+        payment-status says otherwise; anything else is failed."""
+        if not isinstance(r, dict):
+            return "unknown", None, "unreadable reply from the Clover proxy", r
         try:
-            code = int(status) if status is not None else 200
+            code = int(r.get("status") or 200)
         except (TypeError, ValueError):
             code = 200
-        if code < 300:
-            d = data if isinstance(data, dict) else {}
-            pid = d.get("id") or d.get("paymentId") or (d.get("payment") or {}).get("id")
-            state = str(d.get("status") or d.get("result") or "").upper()
-            if state and state not in ("SUCCESS", "APPROVED", "PAID", "SUCCEEDED", "OK"):
-                return "failed", pid, d.get("message") or f"Clover said {state}", r
-            return "paid", pid, None, r
+        data = r.get("data")
+        if code == 200:
+            payment = data.get("payment") if isinstance(data, dict) else None
+            if isinstance(payment, dict) and str(payment.get("result", "")).upper() == "SUCCESS":
+                return "paid", payment.get("id"), None, r
+            return "unknown", None, "unexpected reply from the terminal", r
         message = data.get("message") if isinstance(data, dict) else (str(data) if data else "")
-        if code >= 500 or "No response" in (message or ""):
-            return "unknown", None, message or f"Clover returned {code}", r
-        return "failed", None, message or f"Clover returned {code}", r
+        if code >= 500:
+            return "unknown", None, message or "Payment cancelled on the terminal", r
+        return "failed", None, message or "The terminal declined this payment", r

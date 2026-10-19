@@ -1069,13 +1069,33 @@ def run_card_charge(record_id, staff, user_id):
             if device:
                 with pool().connection() as conn:
                     conn.execute("update pos_card_payments set device = %s where id = %s", (device, row["id"])); conn.commit()
-        outcome, pid, message, raw = CLV.send_payment(row["store_key"], device, int(round(float(row["amount"]) * 100)), record_id, note)
+        amount_minor = int(round(float(row["amount"]) * 100))
+        outcome, pid, message, raw = CLV.send_payment(row["store_key"], device, amount_minor, record_id, note)
+        if outcome == "unknown":
+            # As the helper does: a 500 or a lost reply may hide a completed charge. Ask before giving up.
+            outcome, pid, message, raw = verify_card(row, amount_minor, message, raw, attempts=3, wait=3)
         settle_card(record_id, outcome, pid, message, raw, staff, user_id)
     except Exception as exc:  # never let a thread die silently
         app.logger.exception("card charge %s: %s", record_id, exc)
         settle_card(record_id, "unknown", None, str(exc)[:300], None, staff, user_id)
     finally:
         _card_threads.pop(record_id, None)
+
+
+def verify_card(row, amount_minor, message, raw, attempts=1, wait=0):
+    """Poll the proxy's payment-status for this attempt. Paid wins; otherwise the
+    attempt is failed (the terminal cancelled or declined it) and can be retried."""
+    for i in range(attempts):
+        try:
+            status = CLV.payment_status(row["store_key"], row["client_record_id"], amount_minor, row["client_record_id"])
+        except clover.CloverError as exc:
+            app.logger.warning("payment-status for %s: %s", row["client_record_id"], exc)
+            status = None
+        if status and status.get("paid"):
+            return "paid", status.get("paymentId"), None, {"sent": raw, "status": status}
+        if i < attempts - 1:
+            time.sleep(wait)
+    return "failed", None, message or "Payment cancelled on the terminal", raw
 
 
 def settle_card(record_id, outcome, pid, message, raw, staff, user_id):
@@ -1129,32 +1149,10 @@ def card_check(record_id):
         abort(404, "no such card payment")
     if row["status"] in ("paid", "failed"):
         return card_status(record_id)
-    try:
-        charges = CLV.charges_by_order(row["store_key"], record_id)
-    except clover.CloverError as exc:
-        abort(502, str(exc))
-    found = clover_paid_charge(charges)
-    if found:
-        settle_card(record_id, "paid", found.get("id"), None, charges, session.get("staff"), session.get("user_id"))
-    else:
-        settle_card(record_id, "failed", None, "Clover has no payment for this sale; charge again", charges, None, None)
+    outcome, pid, message, raw = verify_card(row, int(round(float(row["amount"]) * 100)),
+                                             "Clover has no payment for this sale; charge again", None)
+    settle_card(record_id, outcome, pid, message, raw, session.get("staff"), session.get("user_id"))
     return card_status(record_id)
-
-
-def clover_paid_charge(charges):
-    """First successful charge in whatever shape the proxy returns the list."""
-    items = charges
-    if isinstance(charges, dict):
-        items = charges.get("data") or charges.get("charges") or charges.get("elements") or []
-    if isinstance(items, dict):
-        items = items.get("elements") or items.get("charges") or [items]
-    for c in items if isinstance(items, list) else []:
-        if not isinstance(c, dict):
-            continue
-        state = str(c.get("status") or c.get("result") or "SUCCESS").upper()
-        if state in ("SUCCESS", "APPROVED", "PAID", "SUCCEEDED", "CAPTURED", "OK") and not c.get("refunded"):
-            return c
-    return None
 
 
 @app.get("/api/admin/clover/devices")
