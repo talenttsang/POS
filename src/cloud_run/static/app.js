@@ -14,7 +14,7 @@
   // The payment screen (cash received, quick amounts, keypad, change) is
   // switched off for now: Charge records the sale at the exact total straight
   // away. Set this to true to bring the screen back; its code is all still here.
-  const PAYMENT_SCREEN = false;
+  const PAYMENT_SCREEN = true;   // cash goes through the tender screen: cash received, change due
 
   const state = {
     config: null,
@@ -568,7 +568,7 @@
     const change = Number(sale.change);
     $('doneKicker').textContent = change > 0.004 ? 'Change due' : `Sale recorded · ${sale.paymentMethod === 'card' ? 'card' : 'cash'}`;
     $('doneAmount').textContent = money(change > 0.004 ? change : sale.total);
-    $('doneMeta').textContent = `Sale #${sale.number} · ${money(sale.total)} · ${sale.staff} · ${currentEvent()?.name || ''}`;
+    $('doneMeta').textContent = `Sale #${sale.number} · ${money(sale.total)}${sale.paymentMethod === 'cash' && Number(sale.cashReceived) ? ` · cash received ${money(sale.cashReceived)} · change ${money(sale.change)}` : ''} · ${sale.staff} · ${currentEvent()?.name || ''}`;
     $('doneInvoice').href = invoiceUrl(sale.number);
     state.cart = [];
     state.discount = 0;
