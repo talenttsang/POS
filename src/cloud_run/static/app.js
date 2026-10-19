@@ -24,6 +24,7 @@
     cart: [],                     // [{ product, qty, barcode }]
     discount: 0,
     discountMode: localStorage.getItem('pos.discountMode') === 'percent' ? 'percent' : 'amount',
+    taxOff: false,                // the venue's tax switched off for this one sale
     cashCents: 0,
     pendingSale: null,            // the payload being sent, kept for retry
     orders: [],
@@ -320,7 +321,7 @@
     const percent = state.discountMode === 'percent' ? Math.min(entered, 100) : null;
     const discount = Math.min(cents(percent === null ? entered : subtotal * percent / 100), subtotal);
     // The venue's sales tax goes on top of what is left after the discount; the server recomputes it.
-    const rate = Number(currentEvent()?.taxRate || 0);
+    const rate = state.taxOff ? 0 : Number(currentEvent()?.taxRate || 0);
     const tax = cents((subtotal - discount) * rate);
     const total = cents(subtotal - discount + tax);
     return { subtotal, discount, tax, taxLabel: currentEvent()?.taxLabel || 'Tax', total, percent };
@@ -332,7 +333,18 @@
     ${t.tax ? `<div class="trow"><span>${esc(t.taxLabel)}</span><span class="money">${money(t.tax)}</span></div>` : ''}
     <div class="trow grand"><span>Total</span><span class="money">${money(t.total)}</span></div>`;
 
+  // ---- sales tax on/off for the current sale (tax-exempt customers)
+  const renderTaxToggle = () => {
+    const ev = currentEvent(); const rate = Number(ev?.taxRate || 0);
+    $('taxTools').hidden = !rate;
+    if (!rate) { state.taxOff = false; return; }
+    const label = ev.taxLabel || `${+(rate * 100).toFixed(2)}% tax`;
+    $('taxToggle').textContent = state.taxOff ? `${label} off` : `${label} on`;
+    $('taxToggle').classList.toggle('on', !state.taxOff);
+    $('taxToggle').setAttribute('aria-pressed', String(!state.taxOff));
+  };
   const renderCart = () => {
+    renderTaxToggle();
     if (!PAYMENT_SCREEN) state.pendingSale = null;   // the cart changed; a retry must send the new cart
     const count = state.cart.reduce((a, l) => a + l.qty, 0);
     $('cartCount').textContent = `${count} item${count === 1 ? '' : 's'}`;
@@ -367,7 +379,7 @@
     }
     renderCart();
   });
-  $('clearBtn').addEventListener('click', () => { state.cart = []; state.discount = 0; state.pendingSale = null; $('discountInput').value = ''; renderCart(); });
+  $('clearBtn').addEventListener('click', () => { state.cart = []; state.discount = 0; state.pendingSale = null; state.taxOff = false; $('discountInput').value = ''; renderTaxToggle(); renderCart(); });
   $('discountInput').addEventListener('input', () => { state.discount = Number($('discountInput').value) || 0; renderCart(); });
   const applyDiscountMode = () => {
     const pct = state.discountMode === 'percent';
@@ -384,6 +396,7 @@
     applyDiscountMode();
   });
   applyDiscountMode();
+  $('taxToggle').addEventListener('click', () => { state.taxOff = !state.taxOff; renderTaxToggle(); renderCart(); });
 
   // ------------------------------------------------------------ payment
 
@@ -397,6 +410,7 @@
     eventId: state.eventId,
     items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
     discount: cartTotals().discount,
+    taxExempt: state.taxOff,
   });
   const cardUi = (text, { err = '', retry = false, check = false, cancel = 'Cancel' } = {}) => {
     $('cardStatus').textContent = text; $('cardErr').textContent = err;
@@ -456,6 +470,7 @@
       eventId: state.eventId,
       items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
       discount: cartTotals().discount,
+      taxExempt: state.taxOff,
       cashReceived: cartTotals().total,
     };
     state.pendingSale = payload;
@@ -522,6 +537,7 @@
       eventId: state.eventId,
       items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
       discount: t.discount,
+      taxExempt: state.taxOff,
       cashReceived: state.cashCents / 100,
     };
     await sendSale(payload);
@@ -556,7 +572,9 @@
     $('doneInvoice').href = invoiceUrl(sale.number);
     state.cart = [];
     state.discount = 0;
+    state.taxOff = false;
     $('discountInput').value = '';
+    renderTaxToggle();
     renderCart();
     go('done');
     searchProducts().catch(() => {});

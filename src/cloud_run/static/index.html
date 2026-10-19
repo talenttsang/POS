@@ -92,6 +92,10 @@
         </div>
         <input id="discountInput" type="text" inputmode="decimal" pattern="[0-9]*[.]?[0-9]*" placeholder="0.00" data-numpad="decimal" aria-label="Discount amount">
       </div>
+      <div class="tools" id="taxTools" hidden>
+        <label>Sales tax on this sale</label>
+        <button type="button" class="chip on" id="taxToggle" aria-pressed="true">HST 13% on</button>
+      </div>
       <div class="totals" id="cartTotals"></div>
       <div class="cta">
         <button class="btn primary" id="chargeBtn" disabled>Charge</button>

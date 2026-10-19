@@ -975,12 +975,14 @@ def record_id_of(body):
     return record_id
 
 
-def insert_sale(conn, record_id, event, lines, discount, note, payment_method, cash=None, staff=None, user_id=None):
+def insert_sale(conn, record_id, event, lines, discount, note, payment_method, cash=None, staff=None, user_id=None, tax_exempt=False):
     """Write the sale and its lines inside the caller's transaction; idempotent on record_id."""
     existing = conn.execute("select * from pos_transactions where client_record_id = %s", (record_id,)).fetchone()
     if existing:
         return existing, False
-    subtotal, discount, tax, grand = totals(lines, discount, event.get("tax_rate") or 0)
+    # The cashier can switch the venue's tax off for one sale (a tax-exempt customer).
+    tax_rate = 0 if tax_exempt else (event.get("tax_rate") or 0)
+    subtotal, discount, tax, grand = totals(lines, discount, tax_rate)
     if payment_method == "cash":
         cash = money(cash or 0)
         if cash < grand:
@@ -995,7 +997,7 @@ def insert_sale(conn, record_id, event, lines, discount, note, payment_method, c
            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            returning *""",
         (record_id, event["id"], event["code"], staff or "—", user_id if user_id != "master" else None,
-         event["currency"], payment_method, subtotal, discount, event.get("tax_rate") or 0,
+         event["currency"], payment_method, subtotal, discount, tax_rate,
          (event.get("tax_label") if tax else None), tax, grand, grand, cash, change, note),
     ).fetchone()
     for l in lines:
@@ -1022,7 +1024,8 @@ def create_sale():
     with pool().connection() as conn:
         with conn.transaction():
             txn, created = insert_sale(conn, record_id, event, lines, body.get("discount"), note, "cash",
-                                       cash=body.get("cashReceived"), staff=session.get("staff"), user_id=session.get("user_id"))
+                                       cash=body.get("cashReceived"), staff=session.get("staff"), user_id=session.get("user_id"),
+                                       tax_exempt=bool(body.get("taxExempt")))
             payload = sale_payload(conn, txn)
     if created:
         start_move_worker()
@@ -1047,12 +1050,13 @@ def card_charge():
     if not event.get("clover_store"):
         abort(400, f"this {VENUE} has no Clover store key set up")
     lines = build_lines(body.get("items") or [])
-    subtotal, discount, tax, grand = totals(lines, body.get("discount"), event.get("tax_rate") or 0)
+    tax_exempt = bool(body.get("taxExempt"))
+    subtotal, discount, tax, grand = totals(lines, body.get("discount"), 0 if tax_exempt else (event.get("tax_rate") or 0))
     if grand <= 0:
         abort(400, "nothing to charge")
     note = (str(body.get("note") or "").strip() or None)
     cart = {"items": [{"productId": str(l["product"]["id"]), "quantity": l["quantity"], "barcode": l["barcode"]} for l in lines],
-            "discount": str(discount), "note": note}
+            "discount": str(discount), "note": note, "taxExempt": tax_exempt}
     with pool().connection() as conn:
         row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
         if not row:
@@ -1134,7 +1138,7 @@ def settle_card(record_id, outcome, pid, message, raw, staff, user_id):
                 cart = row["cart"]
                 lines = build_lines(cart["items"])
                 txn, _ = insert_sale(conn, record_id, event, lines, cart.get("discount"), cart.get("note"), "card",
-                                     staff=staff or row["staff_name"], user_id=user_id)
+                                     staff=staff or row["staff_name"], user_id=user_id, tax_exempt=bool(cart.get("taxExempt")))
                 conn.execute("update pos_card_payments set status = 'paid', transaction_id = %s, clover_payment_id = %s, message = null, "
                              "response = %s, updated_at = now() where id = %s",
                              (txn["id"], pid, json.dumps(raw)[:4000] if raw is not None else None, row["id"]))
