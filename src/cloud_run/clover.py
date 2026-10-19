@@ -9,6 +9,7 @@ looking the order up.
 """
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,6 +19,13 @@ DEFAULT_URL = "https://ec2-3-129-203-114.us-east-2.compute.amazonaws.com"
 
 class CloverError(Exception):
     pass
+
+
+def clover_ref(record_id):
+    """Clover caps externalPaymentId (and the order reference) at 32 characters.
+    The register's per-attempt id is a UUID: without its dashes it is exactly 32
+    and still unique per attempt."""
+    return re.sub(r"[^A-Za-z0-9]", "", str(record_id))[:32]
 
 
 class Client:
@@ -86,8 +94,8 @@ class Client:
     def payment_status(self, store, order_id, amount_minor, payment_ref):
         """Did this attempt complete on Clover? {"paid": bool, "paymentId", "cloverOrderId"}."""
         r = self._call("GET", "/api/clover/payment-status",
-                       params={"storehash": self.storehash, "orderId": order_id, "branch": store,
-                               "amount": int(amount_minor), "paymentRef": payment_ref})
+                       params={"storehash": self.storehash, "orderId": clover_ref(order_id), "branch": store,
+                               "amount": int(amount_minor), "paymentRef": clover_ref(payment_ref)})
         return r if isinstance(r, dict) else {"paid": False}
 
     # -- money --------------------------------------------------------------
@@ -98,8 +106,9 @@ class Client:
         # The same body the front-desk helper sends: branch picks the Clover token and
         # reader on the proxy; paymentRef is Clover's externalPaymentId and must be new
         # for every attempt, which our per-attempt record id is.
+        ref = clover_ref(order_id)
         body = {"device": device, "amount": int(amount_minor), "storehash": self.storehash,
-                "orderId": order_id, "branch": store, "store": store, "paymentRef": order_id}
+                "orderId": ref, "branch": store, "store": store, "paymentRef": ref}
         if note:
             body["note"] = note
         try:
@@ -110,7 +119,7 @@ class Client:
 
     def refund(self, store, payment_id, amount_minor, order_id):
         body = {"storehash": self.storehash, "branch": store, "store": store, "paymentId": payment_id,
-                "amount": int(amount_minor), "orderId": order_id}
+                "amount": int(amount_minor), "orderId": clover_ref(order_id)}
         r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{order_id}"}, timeout=120)
         outcome, rid, message, raw = self._outcome(r)
         if outcome != "paid":
