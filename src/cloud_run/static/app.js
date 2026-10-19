@@ -315,8 +315,18 @@
     renderCart();
   };
 
+  // A line's discount: a dollar amount or a percentage of the line, never more than the line.
+  const lineGross = (l) => cents(Number(l.product.price) * l.qty);
+  const lineDiscount = (l) => {
+    if (!l.disc || !(l.disc.value > 0)) return 0;
+    const raw = l.disc.mode === 'percent' ? lineGross(l) * Math.min(l.disc.value, 100) / 100 : l.disc.value;
+    return Math.min(cents(raw), lineGross(l));
+  };
+  const lineItems = () => state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode,
+    ...(l.disc && l.disc.value > 0 ? (l.disc.mode === 'percent' ? { discountPercent: Math.min(l.disc.value, 100) } : { discount: lineDiscount(l) }) : {}) }));
+
   const cartTotals = () => {
-    const subtotal = cents(state.cart.reduce((a, l) => a + Number(l.product.price) * l.qty, 0));
+    const subtotal = cents(state.cart.reduce((a, l) => a + lineGross(l) - lineDiscount(l), 0));
     const entered = Math.max(0, state.discount || 0);
     const percent = state.discountMode === 'percent' ? Math.min(entered, 100) : null;
     const discount = Math.min(cents(percent === null ? entered : subtotal * percent / 100), subtotal);
@@ -351,10 +361,11 @@
     $('cartLines').innerHTML = state.cart.length ? state.cart.map((l) => `
       <div class="line" data-id="${esc(l.product.id)}">
         <div class="line-main">${thumb(l.product, 'mini')}<div><div class="n">${esc(l.product.name)}</div><div class="s">${esc(l.product.category)} · ${money(l.product.price)} each${l.product.stock != null && l.qty > l.product.stock ? ` · <b class="short">only ${l.product.stock} in stock</b>` : ''}</div></div></div>
-        <div class="amt money">${money(Number(l.product.price) * l.qty)}</div>
+        <div class="amt money">${lineDiscount(l) ? `<s>${money(lineGross(l))}</s>` : ''}${money(lineGross(l) - lineDiscount(l))}</div>
         <div class="qty">
           <button data-step="-1" aria-label="Less">−</button><span>${l.qty}</span><button data-step="1" aria-label="More">+</button>
           <button class="rm" data-remove>Remove</button>
+          <button class="disc${lineDiscount(l) ? ' on' : ''}" data-discount>${lineDiscount(l) ? (l.disc.mode === 'percent' ? `−${l.disc.value}%` : `−${money(lineDiscount(l))}`) : 'Discount'}</button>
         </div>
       </div>`).join('') : '<div class="empty">Tap a product or scan a barcode.</div>';
     const t = cartTotals();
@@ -372,6 +383,7 @@
     if (!lineEl) return;
     const line = state.cart.find((l) => l.product.id === lineEl.dataset.id);
     if (!line) return;
+    if (e.target.closest('[data-discount]')) { openLineDiscount(line); return; }
     if (e.target.closest('[data-remove]')) state.cart = state.cart.filter((l) => l !== line);
     else if (e.target.closest('[data-step]')) {
       line.qty += Number(e.target.closest('[data-step]').dataset.step);
@@ -379,6 +391,32 @@
     }
     renderCart();
   });
+  let discLine = null;
+  const openLineDiscount = (line) => {
+    discLine = line;
+    const mode = (line.disc && line.disc.mode) || state.discountMode;
+    $('lineSheetName').textContent = `${line.qty}× ${line.product.name} · ${money(lineGross(line))}`;
+    $('lineDiscMode').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+    $('lineDiscInput').value = line.disc && line.disc.value > 0 ? String(line.disc.value) : '';
+    $('lineDiscInput').placeholder = mode === 'percent' ? '0' : '0.00';
+    $('lineDiscErr').textContent = '';
+    openSheet('lineSheet');
+  };
+  $('lineDiscMode').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mode]'); if (!b) return;
+    $('lineDiscMode').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+    $('lineDiscInput').placeholder = b.dataset.mode === 'percent' ? '0' : '0.00';
+  });
+  $('lineDiscApply').addEventListener('click', () => {
+    if (!discLine) return;
+    const mode = $('lineDiscMode').querySelector('.on').dataset.mode;
+    const value = Number($('lineDiscInput').value) || 0;
+    if (value < 0 || (mode === 'percent' && value > 100) || (mode === 'amount' && value > lineGross(discLine) + 1e-9)) { $('lineDiscErr').textContent = 'That is more than the line is worth.'; return; }
+    discLine.disc = value > 0 ? { mode, value } : null;
+    closeSheets(); renderCart();
+  });
+  $('lineDiscClear').addEventListener('click', () => { if (discLine) discLine.disc = null; closeSheets(); renderCart(); });
+
   $('clearBtn').addEventListener('click', () => { state.cart = []; state.discount = 0; state.pendingSale = null; state.taxOff = false; $('discountInput').value = ''; renderTaxToggle(); renderCart(); });
   $('discountInput').addEventListener('input', () => { state.discount = Number($('discountInput').value) || 0; renderCart(); });
   const applyDiscountMode = () => {
@@ -408,7 +446,7 @@
   const cardPayload = () => ({
     clientRecordId: recordId(),
     eventId: state.eventId,
-    items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
+    items: lineItems(),
     discount: cartTotals().discount,
     taxExempt: state.taxOff,
   });
@@ -468,7 +506,7 @@
     const payload = state.pendingSale || {
       clientRecordId: recordId(),
       eventId: state.eventId,
-      items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
+      items: lineItems(),
       discount: cartTotals().discount,
       taxExempt: state.taxOff,
       cashReceived: cartTotals().total,
@@ -535,7 +573,7 @@
     const payload = {
       clientRecordId: recordId(),
       eventId: state.eventId,
-      items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
+      items: lineItems(),
       discount: t.discount,
       taxExempt: state.taxOff,
       cashReceived: state.cashCents / 100,
@@ -635,7 +673,7 @@
     $('orderDetail').innerHTML = `
       <h3>Sale #${o.number}</h3>
       <div class="muted">${new Date(o.soldAt).toLocaleString('en-CA')} · ${esc(o.staff)} · ${label}</div>
-      <div>${o.items.map((i) => `<div class="ps-line"><span>${i.quantity}× ${esc(i.name)}</span><span class="money">${money(i.lineTotal)}</span></div>`).join('')}</div>
+      <div>${o.items.map((i) => `<div class="ps-line"><span>${i.quantity}× ${esc(i.name)}${Number(i.lineDiscount) ? ` <span class="muted">(−${money(i.lineDiscount)})</span>` : ''}</span><span class="money">${money(i.lineTotal)}</span></div>`).join('')}</div>
       <div class="totals" style="padding:0">
         <div class="trow"><span>Subtotal</span><span class="money">${money(o.subtotal)}</span></div>
         ${Number(o.discount) ? `<div class="trow"><span>Discount</span><span class="money">−${money(o.discount)}</span></div>` : ''}

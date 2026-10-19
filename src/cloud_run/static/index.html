@@ -200,6 +200,16 @@
 
 <div class="scrim" id="scrim"></div>
 
+<div class="sheet" id="lineSheet">
+  <h3>Discount this item</h3>
+  <p class="muted" id="lineSheetName"></p>
+  <div class="row">
+    <div class="seg" id="lineDiscMode" role="group" aria-label="Discount type"><button type="button" class="on" data-mode="amount">$</button><button type="button" data-mode="percent">%</button></div>
+    <input id="lineDiscInput" type="text" inputmode="decimal" pattern="[0-9]*[.]?[0-9]*" placeholder="0.00" data-numpad="decimal" aria-label="Discount">
+  </div>
+  <div class="err" id="lineDiscErr"></div>
+  <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn ghost" id="lineDiscClear">No discount</button><button class="btn primary" id="lineDiscApply">Apply</button></div>
+</div>
 <div class="sheet" id="cardSheet">
   <h3>Card payment <span id="cardAmount" class="money"></span></h3>
   <p id="cardStatus">Sending to the Clover Flex…</p>
