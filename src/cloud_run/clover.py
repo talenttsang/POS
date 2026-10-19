@@ -72,6 +72,12 @@ class Client:
                 return row["device_id"]
         return None
 
+    def merchant_for(self, store):
+        for row in self.roster(store):
+            if row.get("merchant_id"):
+                return row["merchant_id"]
+        return None
+
     def charges_by_order(self, store, order_id):
         r = self._call("GET", "/clover/charges-by-order", params={"order_id": order_id, "store": store})
         return r
@@ -81,9 +87,16 @@ class Client:
         """Start a charge on the reader and wait for the customer. Returns
         (outcome, payment_id, message, raw) with outcome paid | failed | unknown."""
         path = "/api/clover/send-payment-sandbox" if self.sandbox else "/api/clover/send-payment"
-        body = {"amount": int(amount_minor), "store": store, "orderId": order_id}
+        body = {"amount": int(amount_minor), "store": store, "orderId": order_id, "order_id": order_id}
         if device:
-            body["device"] = device
+            # The proxy's roster calls it device_id; its sandbox route reads device. Send every spelling.
+            body.update({"device": device, "device_id": device, "deviceId": device})
+        try:
+            merchant = self.merchant_for(store)
+        except CloverError:
+            merchant = None
+        if merchant:
+            body.update({"merchant_id": merchant, "merchantId": merchant})
         if note:
             body["note"] = note
         try:
