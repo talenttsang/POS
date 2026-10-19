@@ -78,7 +78,12 @@
     if (view === 'sell') setTimeout(() => $('searchInput').focus(), 50);
     if (view === 'orders') loadOrders();
     if (view === 'analytics') loadAnalytics();
+    // The Sales list keeps itself current while it is on screen (other tills, refunds, card
+    // outcomes), without anyone tapping Refresh. Nothing polls while the tab is hidden.
+    clearInterval(ordersTimer);
+    if (view === 'orders') ordersTimer = setInterval(() => { if (!document.hidden && !document.querySelector('.sheet.on')) loadOrders(); }, 20000);
   };
+  let ordersTimer = null;
 
   const openSheet = (id) => { $('scrim').classList.add('on'); $(id).classList.add('on'); };
   const closeSheets = () => { $('scrim').classList.remove('on'); document.querySelectorAll('.sheet').forEach((s) => s.classList.remove('on')); };
