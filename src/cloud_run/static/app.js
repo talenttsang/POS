@@ -642,16 +642,25 @@
     if ($('refundAmount').value) body.amount = Number($('refundAmount').value);
     if (method) body.method = method;
     if (!body.reason) { $('refundErr').textContent = 'Pick a reason'; return; }
+    const btn = $('refundConfirm'); const cashBtn = $('refundCash');
+    btn.disabled = cashBtn.disabled = true;
+    btn.textContent = o.paymentMethod === 'card' && method !== 'cash' ? 'Refunding on the Flex…' : 'Refunding…';
     try {
       await api(`/api/sales/${o.number}/refund`, { method: 'POST', body });
       closeSheets();
       toast(`Refunded sale #${o.number}${method === 'cash' && o.paymentMethod === 'card' ? ' in cash' : ''}`);
-      await loadOrders();
-      renderDetail();
     } catch (err) {
-      $('refundErr').textContent = err.message;
-      // Clover would not take the refund back to the card: let the admin hand cash over instead.
-      if (o.paymentMethod === 'card' && !method) $('refundCash').hidden = false;
+      // A refund that already went through (a second tap, or a reply lost on the way) is done, not an error.
+      if (/already refunded/i.test(err.message)) { closeSheets(); toast(`Sale #${o.number} is already refunded`); }
+      else {
+        $('refundErr').textContent = err.message;
+        // Clover would not take the refund back to the card: let the admin hand cash over instead.
+        if (o.paymentMethod === 'card' && !method) cashBtn.hidden = false;
+      }
+    } finally {
+      btn.disabled = cashBtn.disabled = false; btn.textContent = 'Refund';
+      await loadOrders().catch(() => {});
+      renderDetail();
     }
   };
   $('refundConfirm').addEventListener('click', () => sendRefund());
