@@ -339,7 +339,11 @@
     const t = cartTotals();
     $('cartTotals').innerHTML = totalsHtml(t);
     $('chargeBtn').disabled = !state.cart.length;
-    $('chargeBtn').textContent = state.cart.length ? `Charge ${money(t.total)}` : 'Charge';
+    const flex = !!(currentEvent() && currentEvent().cloverDevice);
+    $('cardBtn').hidden = !flex;
+    $('cardBtn').disabled = !state.cart.length || cartTotals().total <= 0;
+    if (flex) { $('cardBtn').textContent = state.cart.length ? `Card ${money(cartTotals().total)}` : 'Card'; }
+    $('chargeBtn').textContent = state.cart.length ? `${currentEvent() && currentEvent().cloverDevice ? 'Cash' : 'Charge'} ${money(t.total)}` : 'Charge';
   };
 
   $('cartLines').addEventListener('click', (e) => {
@@ -375,6 +379,64 @@
   // ------------------------------------------------------------ payment
 
   $('chargeBtn').addEventListener('click', () => (PAYMENT_SCREEN ? openPayment() : chargeExact()));
+  $('cardBtn').addEventListener('click', () => chargeCard());
+
+  // ---- card payments on the Clover Flex: start, then poll until the reader answers
+  let cardPoll = null;
+  const cardPayload = () => ({
+    clientRecordId: recordId(),
+    eventId: state.eventId,
+    items: state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode })),
+    discount: cartTotals().discount,
+  });
+  const cardUi = (text, { err = '', retry = false, check = false, cancel = 'Cancel' } = {}) => {
+    $('cardStatus').textContent = text; $('cardErr').textContent = err;
+    $('cardRetry').hidden = !retry; $('cardCheck').hidden = !check; $('cardCancel').textContent = cancel;
+  };
+  const chargeCard = async (payload) => {
+    if (!state.cart.length) return;
+    payload = payload || cardPayload();
+    state.cardPending = payload;
+    $('cardAmount').textContent = money(cartTotals().total);
+    cardUi('Sending to the Clover Flex…');
+    openSheet('cardSheet');
+    try {
+      await api('/api/card/charge', { method: 'POST', body: payload });
+      cardUi('Hand the Flex to the customer and follow the prompts on its screen.');
+      pollCard(payload.clientRecordId);
+    } catch (err) {
+      cardUi('The charge could not be started.', { err: err.message, retry: true });
+    }
+  };
+  const pollCard = (id) => {
+    clearInterval(cardPoll);
+    cardPoll = setInterval(async () => {
+      try {
+        const r = await api(`/api/card/${encodeURIComponent(id)}`);
+        if (r.status === 'started') return;
+        clearInterval(cardPoll);
+        cardOutcome(r);
+      } catch (err) { /* keep polling; the network may be flaky */ }
+    }, 2000);
+  };
+  const cardOutcome = (r) => {
+    if (r.status === 'paid') {
+      closeSheets(); state.cardPending = null;
+      finishSale(r.sale);
+    } else if (r.status === 'failed') {
+      cardUi('The card was not charged.', { err: r.message || 'Declined or cancelled on the reader.', retry: true });
+    } else {
+      cardUi('No answer from the Flex. The customer may or may not have paid.', { err: r.message || '', check: true, cancel: 'Give up' });
+    }
+  };
+  $('cardRetry').addEventListener('click', () => chargeCard());            // a fresh attempt gets a new record id
+  $('cardCheck').addEventListener('click', async () => {
+    const id = state.cardPending && state.cardPending.clientRecordId; if (!id) return;
+    cardUi('Asking Clover…');
+    try { cardOutcome(await api(`/api/card/${encodeURIComponent(id)}/check`, { method: 'POST', body: {} })); }
+    catch (err) { cardUi('Could not reach Clover.', { err: err.message, check: true, cancel: 'Give up' }); }
+  });
+  $('cardCancel').addEventListener('click', () => { clearInterval(cardPoll); closeSheets(); });
 
   /** Record the sale at the exact total, no payment screen. Re-pressing after a
       failure resends the same payload, so a retry can never double-record. */
@@ -479,7 +541,7 @@
   const finishSale = (sale) => {
     $('cashTender').onclick = null;
     const change = Number(sale.change);
-    $('doneKicker').textContent = change > 0.004 ? 'Change due' : 'Sale recorded · cash';
+    $('doneKicker').textContent = change > 0.004 ? 'Change due' : `Sale recorded · ${sale.paymentMethod === 'card' ? 'card' : 'cash'}`;
     $('doneAmount').textContent = money(change > 0.004 ? change : sale.total);
     $('doneMeta').textContent = `Sale #${sale.number} · ${money(sale.total)} · ${sale.staff} · ${currentEvent()?.name || ''}`;
     $('doneInvoice').href = invoiceUrl(sale.number);
@@ -551,8 +613,8 @@
         <div class="trow"><span>Subtotal</span><span class="money">${money(o.subtotal)}</span></div>
         ${Number(o.discount) ? `<div class="trow"><span>Discount</span><span class="money">−${money(o.discount)}</span></div>` : ''}
         <div class="trow grand"><span>Total</span><span class="money">${money(o.total)}</span></div>
-        <div class="trow"><span>Cash received</span><span class="money">${money(o.cashReceived)}</span></div>
-        <div class="trow"><span>Change</span><span class="money">${money(o.change)}</span></div>
+        ${o.paymentMethod === 'card' ? '<div class="trow"><span>Paid by card</span><span>Clover Flex</span></div>' : `<div class="trow"><span>Cash received</span><span class="money">${money(o.cashReceived)}</span></div>
+        <div class="trow"><span>Change</span><span class="money">${money(o.change)}</span></div>`}
         ${o.refundAmount ? `<div class="trow" style="color:var(--danger)"><span>Refunded · ${esc(o.refundReason || '')}</span><span class="money">−${money(o.refundAmount)}</span></div>` : ''}
       </div>
       <div class="invoice-row">
@@ -566,6 +628,7 @@
       $('refundNum').textContent = `#${o.number}`;
       $('refundReason').value = ''; $('refundAmount').value = ''; $('refundCode').value = ''; $('refundAdminName').value = ''; $('refundAdminPin').value = ''; $('refundErr').textContent = '';
       $('refundApproval').hidden = state.config.role === 'admin';
+      $('refundHow').textContent = o.paymentMethod === 'card' ? 'The money goes back to the customer\'s card through Clover; an admin has to approve.' : 'Refunds are paid back in cash and need an admin to approve.';
       $('refundAmount').placeholder = `Amount (blank = full ${money(o.amountPaid)})`;
       openSheet('refundSheet');
     });

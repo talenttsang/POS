@@ -88,11 +88,13 @@ input { font: inherit; color: inherit; }
 .totals { padding: 10px 18px; display: grid; gap: 6px; font-size: 14px; }
 .trow { display: flex; justify-content: space-between; color: var(--muted); }
 .trow.grand { color: var(--ink); font-weight: 800; font-size: 22px; padding-top: 6px; border-top: 1px solid var(--line); margin-top: 4px; }
-.cta { padding: 12px 18px 18px; display: grid; grid-template-columns: 1fr; gap: 10px; }
+.cta { padding: 12px 18px 18px; display: flex; align-items: center; gap: 10px; }
 .btn { height: 54px; border-radius: 12px; font-weight: 700; font-size: 16px; }
 .btn.primary { background: var(--accent); color: #fff; }
 .btn.ghost { background: var(--chip); }
 .btn.danger { background: #fdecea; color: var(--danger); }
+.btn.card { background: var(--ink); color: #fff; }
+.cta .btn { flex: 1; min-width: 0; height: 54px; }
 
 /* Pay */
 #view-pay { grid-template-columns: 1fr 380px; }

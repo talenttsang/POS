@@ -121,9 +121,10 @@ def build_invoice_pdf(sale, items, venue, bill_to=None):
 
     # Order facts in two columns of label / value.
     paid = money(sale["amount_paid"], cur)
+    how = "Card (Clover)" if sale.get("payment_method") == "card" else "Cash"
     facts = [
         ("Order:", f"#{number}", "Order Date:", long_date(sale["sold_at"])),
-        ("Payment Method:", f"Cash ({paid})", "Shipping Method:", "Pickup In Store"),
+        ("Payment Method:", f"{how} ({paid})", "Shipping Method:", "Pickup In Store"),
     ]
     label_w, value_w = 110, col - 110
     for l1, v1, l2, v2 in facts:

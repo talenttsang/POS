@@ -127,7 +127,7 @@
     $('evSubmit').textContent = store ? 'Add store' : 'Add event';
     $('venueCol').textContent = store ? 'Store' : 'Event';
     $('venueDetailCol').textContent = store ? 'Address' : 'Dates';
-    $('eventForm').style.gridTemplateColumns = store ? '2fr 3fr 1fr 1fr 110px auto' : '2fr 1fr 1fr 110px auto';
+    $('eventForm').style.gridTemplateColumns = store ? '2fr 2fr 1fr 1fr 1fr 1fr 110px auto' : '2fr 1fr 1fr 110px auto';
   };
   const today = () => new Date().toISOString().slice(0, 10);
   const loadEvents = async () => { events = await api('/api/admin/events'); renderEvents(); };
@@ -137,7 +137,7 @@
       const state = !e.isActive ? ['refunded', 'Archived'] : e.kind === 'store' ? ['', 'Open'] : (e.startsOn <= t && t <= e.endsOn) ? ['', 'Running'] : e.startsOn > t ? ['partial', 'Upcoming'] : ['', 'Past'];
       return `<tr class="${e.isActive ? '' : 'inactive'}" data-id="${esc(e.id)}">
         <td><b>${esc(e.name)}</b><div class="hint">${esc(e.code)}</div></td>
-        <td>${e.kind === 'store' ? `${esc(e.address || '')}${e.svLocation ? `<div class="hint">SkuVault ${esc(e.svWarehouse)} / ${esc(e.svLocation)}</div>` : ''}` : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
+        <td>${e.kind === 'store' ? `${esc(e.address || '')}${e.svLocation ? `<div class="hint">SkuVault ${esc(e.svWarehouse)} / ${esc(e.svLocation)}</div>` : ''}${e.cloverDevice ? `<div class="hint">Clover Flex ${esc(e.cloverDevice)} · ${esc(e.cloverStore)}</div>` : ''}` : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
         <td>${esc(e.currency)}</td>
         <td><span class="status ${state[0]}">${state[1]}</span></td>
         <td class="actions">
@@ -150,9 +150,9 @@
     e.preventDefault(); $('evErr').textContent = '';
     try {
       const body = { name: $('evName').value, currency: $('evCurrency').value };
-      if (posMode === 'store') { body.address = $('evAddress').value; body.svWarehouse = $('evSvWarehouse').value; body.svLocation = $('evSvLocation').value; } else { body.startsOn = $('evStart').value; body.endsOn = $('evEnd').value; }
+      if (posMode === 'store') { body.address = $('evAddress').value; body.svWarehouse = $('evSvWarehouse').value; body.svLocation = $('evSvLocation').value; body.cloverStore = $('evCloverStore').value; body.cloverDevice = $('evCloverDevice').value; } else { body.startsOn = $('evStart').value; body.endsOn = $('evEnd').value; }
       const ev = await api('/api/admin/events', { method: 'POST', body });
-      $('evName').value = ''; $('evStart').value = ''; $('evEnd').value = ''; $('evAddress').value = ''; $('evSvWarehouse').value = ''; $('evSvLocation').value = '';
+      $('evName').value = ''; $('evStart').value = ''; $('evEnd').value = ''; $('evAddress').value = ''; $('evSvWarehouse').value = ''; $('evSvLocation').value = ''; $('evCloverStore').value = ''; $('evCloverDevice').value = '';
       toast(`Added ${ev.name}`); await loadEvents();
     } catch (err) { $('evErr').textContent = err.message; }
   });
@@ -160,7 +160,7 @@
     const btn = e.target.closest('[data-eact]'); if (!btn) return;
     const ev = events.find((x) => x.id === btn.closest('tr').dataset.id); if (!ev) return;
     if (btn.dataset.eact === 'edit') {
-      editing = ev; $('esName').textContent = ev.name; $('esNameInput').value = ev.name; $('esStart').value = ev.startsOn || ''; $('esEnd').value = ev.endsOn || ''; $('esAddress').value = ev.address || ''; $('esSvWarehouse').value = ev.svWarehouse || ''; $('esSvLocation').value = ev.svLocation || ''; $('esCurrency').value = ev.currency; $('esErr').textContent = '';
+      editing = ev; $('esName').textContent = ev.name; $('esNameInput').value = ev.name; $('esStart').value = ev.startsOn || ''; $('esEnd').value = ev.endsOn || ''; $('esAddress').value = ev.address || ''; $('esSvWarehouse').value = ev.svWarehouse || ''; $('esSvLocation').value = ev.svLocation || ''; $('esCloverStore').value = ev.cloverStore || ''; $('esCloverDevice').value = ev.cloverDevice || ''; $('esDevices').textContent = ''; $('esCurrency').value = ev.currency; $('esErr').textContent = '';
       openSheet('eventSheet'); return;
     }
     try {
@@ -173,11 +173,24 @@
     if (!editing) return;
     try {
       const body = { name: $('esNameInput').value, currency: $('esCurrency').value };
-      if (posMode === 'store') { body.address = $('esAddress').value; body.svWarehouse = $('esSvWarehouse').value; body.svLocation = $('esSvLocation').value; } else { body.startsOn = $('esStart').value; body.endsOn = $('esEnd').value; }
+      if (posMode === 'store') { body.address = $('esAddress').value; body.svWarehouse = $('esSvWarehouse').value; body.svLocation = $('esSvLocation').value; body.cloverStore = $('esCloverStore').value; body.cloverDevice = $('esCloverDevice').value; } else { body.startsOn = $('esStart').value; body.endsOn = $('esEnd').value; }
       await api(`/api/admin/events/${editing.id}`, { method: 'PATCH', body });
       closeSheets(); toast(`${posMode === 'store' ? 'Store' : 'Event'} updated`); await loadEvents();
     } catch (err) { $('esErr').textContent = err.message; }
   });
+
+  $('esFindDevices').addEventListener('click', async () => {
+    const store = $('esCloverStore').value.trim(); $('esDevices').textContent = '';
+    if (!store) { $('esDevices').textContent = 'Type the Clover store key first.'; return; }
+    try {
+      const devices = await api(`/api/admin/clover/devices?${new URLSearchParams({ store })}`);
+      const list = Array.isArray(devices) ? devices : [];
+      $('esDevices').innerHTML = list.length
+        ? 'Readers: ' + list.map((d) => `<button type="button" class="sm" data-serial="${esc(d.serial || d.serialNumber || d.id || '')}">${esc(d.name || d.model || d.serial || d.serialNumber || d.id || '?')} · ${esc(d.serial || d.serialNumber || d.id || '')}</button>`).join(' ')
+        : 'The proxy lists no readers for that store key.';
+    } catch (err) { $('esDevices').textContent = err.message; }
+  });
+  $('esDevices').addEventListener('click', (e) => { const b = e.target.closest('[data-serial]'); if (b) $('esCloverDevice').value = b.dataset.serial; });
 
   // ---- inventory sync
   const loadInventory = async () => {

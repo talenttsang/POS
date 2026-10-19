@@ -134,6 +134,30 @@ service's project. SkuVault allows about five calls a minute per endpoint, so
 stock is cached for three minutes per location and served stale when
 throttled. `src/cloud_run/skuvault.py` is the whole client.
 
+## Card payments on a Clover Flex
+
+A store can name the Clover store key and the serial of its Clover Flex
+(admin portal, store form; "Find" lists the readers the proxy knows for a
+key). The register then shows a **Card** button next to **Cash**:
+
+1. `POST /api/card/charge` writes a `pos_card_payments` row and asks the
+   company's Clover proxy (`CLOVER_PROXY_URL`, default the EC2 host) to start
+   the charge on the reader, in a background thread;
+2. the register polls `GET /api/card/<record id>` every two seconds while
+   the customer taps;
+3. **paid** records the sale with `payment_method = 'card'` (no cash detail)
+   and queues the inventory move; **failed** shows Clover's message with
+   "Try again" (a fresh record id, so a declined attempt is never confused
+   with a retry); **unknown** (no reply from the reader) offers "Check with
+   Clover", which looks the order up by record id and settles it either way.
+
+Refunding a card sale sends the money back to the card through the proxy
+first (`refund_method = 'card'`); card sales never appear in the cash drawer
+summary. `CLOVER_SANDBOX=1` uses the proxy's sandbox endpoint; an optional
+`CLOVER_PROXY_SECRET` secret is sent as the `x-proxy-secret` header (name
+overridable with `CLOVER_PROXY_SECRET_HEADER`). `src/cloud_run/clover.py` is
+the whole client.
+
 ## Custom domain
 
 `domain.sh` puts `pos.gencbeauty.com` in front of the service with a global

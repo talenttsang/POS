@@ -95,6 +95,7 @@
       <div class="totals" id="cartTotals"></div>
       <div class="cta">
         <button class="btn primary" id="chargeBtn" disabled>Charge</button>
+        <button class="btn card" id="cardBtn" disabled hidden>Card</button>
       </div>
     </aside>
   </section>
@@ -195,9 +196,15 @@
 
 <div class="scrim" id="scrim"></div>
 
+<div class="sheet" id="cardSheet">
+  <h3>Card payment <span id="cardAmount" class="money"></span></h3>
+  <p id="cardStatus">Sending to the Clover Flex…</p>
+  <div class="err" id="cardErr"></div>
+  <div class="row"><button class="btn ghost" id="cardCancel">Cancel</button><button class="btn primary" id="cardRetry" hidden>Try again</button><button class="btn primary" id="cardCheck" hidden>Check with Clover</button></div>
+</div>
 <div class="sheet" id="refundSheet">
   <h3>Refund <span id="refundNum"></span></h3>
-  <p>Refunds are paid back in cash and need an admin to approve.</p>
+  <p id="refundHow">Refunds are paid back in cash and need an admin to approve.</p>
   <select id="refundReason">
     <option value="">Pick a reason</option>
     <option>Changed mind</option>
