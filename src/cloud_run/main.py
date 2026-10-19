@@ -244,6 +244,7 @@ def serialise_event(e):
             "endsOn": e["ends_on"].isoformat() if e.get("ends_on") else None,
             "svWarehouse": e.get("sv_warehouse"), "svLocation": e.get("sv_location"),
             "cloverStore": e.get("clover_store"), "cloverDevice": e.get("clover_device"),
+            "taxRate": str(e.get("tax_rate") or 0), "taxLabel": e.get("tax_label"),
             "currency": e["currency"], "isActive": e["is_active"]}
 
 
@@ -327,6 +328,18 @@ def event_fields(body, creating):
     for key, col in (("cloverStore", "clover_store"), ("cloverDevice", "clover_device")):
         if key in body:
             fields[col] = re.sub(r"[^A-Za-z0-9_\-]", "", str(body.get(key) or ""))[:80] or None
+    if "taxRate" in body:
+        # Typed as a percentage in the portal (13 for HST 13%); stored as a fraction.
+        raw = str(body.get("taxRate") or "0").strip().rstrip("%")
+        try:
+            pct = Decimal(raw or "0")
+        except Exception:
+            abort(400, "tax rate must be a number of percent, e.g. 13")
+        if pct < 0 or pct >= 100:
+            abort(400, "tax rate must be between 0 and 99 percent")
+        fields["tax_rate"] = (pct / 100).quantize(Decimal("0.00001"))
+    if "taxLabel" in body:
+        fields["tax_label"] = re.sub(r"\s+", " ", str(body.get("taxLabel") or "")).strip()[:40] or None
     if creating:
         fields["kind"] = MODE
     if "currency" in body or creating:
@@ -925,13 +938,14 @@ def money(value):
     return Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-def totals(lines, discount):
-    """The shelf price is what the customer pays: subtotal minus discount, nothing added."""
+def totals(lines, discount, tax_rate=0):
+    """Shelf prices, minus the whole-sale discount, plus the venue's tax on what is left."""
     subtotal = sum((money(l["unit_price"]) * l["quantity"] for l in lines), Decimal("0"))
     discount = money(discount or 0)
     if discount < 0 or discount > subtotal:
         abort(400, "discount out of range")
-    return subtotal, discount, money(subtotal - discount)
+    tax = money((subtotal - discount) * Decimal(str(tax_rate or 0)))
+    return subtotal, discount, tax, money(subtotal - discount + tax)
 
 
 def build_lines(items):
@@ -966,7 +980,7 @@ def insert_sale(conn, record_id, event, lines, discount, note, payment_method, c
     existing = conn.execute("select * from pos_transactions where client_record_id = %s", (record_id,)).fetchone()
     if existing:
         return existing, False
-    subtotal, discount, grand = totals(lines, discount)
+    subtotal, discount, tax, grand = totals(lines, discount, event.get("tax_rate") or 0)
     if payment_method == "cash":
         cash = money(cash or 0)
         if cash < grand:
@@ -976,11 +990,13 @@ def insert_sale(conn, record_id, event, lines, discount, note, payment_method, c
         cash, change = None, Decimal("0.00")
     txn = conn.execute(
         """insert into pos_transactions (client_record_id, event_id, location_id, staff_name, staff_user_id, currency,
-             payment_method, subtotal, discount_total, grand_total, amount_paid, cash_received, change_given, note)
-           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             payment_method, subtotal, discount_total, tax_rate, tax_label, tax_total, grand_total, amount_paid,
+             cash_received, change_given, note)
+           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            returning *""",
         (record_id, event["id"], event["code"], staff or "—", user_id if user_id != "master" else None,
-         event["currency"], payment_method, subtotal, discount, grand, grand, cash, change, note),
+         event["currency"], payment_method, subtotal, discount, event.get("tax_rate") or 0,
+         (event.get("tax_label") if tax else None), tax, grand, grand, cash, change, note),
     ).fetchone()
     for l in lines:
         p = l["product"]
@@ -1031,7 +1047,7 @@ def card_charge():
     if not event.get("clover_store"):
         abort(400, f"this {VENUE} has no Clover store key set up")
     lines = build_lines(body.get("items") or [])
-    subtotal, discount, grand = totals(lines, body.get("discount"))
+    subtotal, discount, tax, grand = totals(lines, body.get("discount"), event.get("tax_rate") or 0)
     if grand <= 0:
         abort(400, "nothing to charge")
     note = (str(body.get("note") or "").strip() or None)
@@ -1276,6 +1292,7 @@ def serialise_sale(t, items):
         "eventId": str(t["event_id"]) if t.get("event_id") else None, "locationId": t["location_id"],
         "currency": t["currency"], "paymentMethod": t["payment_method"],
         "subtotal": s(t["subtotal"]), "discount": s(t["discount_total"]), "total": s(t["grand_total"]),
+        "tax": s(t.get("tax_total")), "taxRate": s(t.get("tax_rate")), "taxLabel": t.get("tax_label"),
         "amountPaid": s(t["amount_paid"]), "cashReceived": s(t["cash_received"]), "change": s(t["change_given"]),
         "refundAmount": s(t["refund_amount"]), "refundReason": t["refund_reason"],
         "refundedAt": t["refunded_at"].isoformat() if t["refunded_at"] else None,

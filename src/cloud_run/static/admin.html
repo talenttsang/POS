@@ -81,6 +81,8 @@
       <label class="store-only" hidden>SkuVault location <input id="evSvLocation" placeholder="e.g. PKP" autocomplete="off"></label>
       <label class="store-only" hidden>Clover store key <input id="evCloverStore" placeholder="as the Clover proxy knows it" autocomplete="off"></label>
       <label class="store-only" hidden>Clover Flex serial (optional) <input id="evCloverDevice" placeholder="blank = the proxy's reader" autocomplete="off"></label>
+      <label>Tax % <input id="evTaxRate" inputmode="decimal" placeholder="0" autocomplete="off"></label>
+      <label>Tax label <input id="evTaxLabel" placeholder="e.g. HST 13%" autocomplete="off"></label>
       <label>Currency <select id="evCurrency"><option>CAD</option><option>USD</option><option>EUR</option></select></label>
       <button class="btn primary" type="submit" id="evSubmit">Add event</button>
     </form>
@@ -151,6 +153,7 @@
   <div class="row store-only" hidden><input id="esSvWarehouse" placeholder="SkuVault warehouse (e.g. IT1)" autocomplete="off"><input id="esSvLocation" placeholder="SkuVault location (e.g. PKP)" autocomplete="off"></div>
   <div class="row store-only" hidden><input id="esCloverStore" placeholder="Clover store key" autocomplete="off"><input id="esCloverDevice" placeholder="Clover Flex serial (optional)" autocomplete="off"><button type="button" class="btn ghost" id="esFindDevices" title="List the Flex readers the proxy knows for this store key">Find</button></div>
   <div class="hint" id="esDevices"></div>
+  <div class="row"><input id="esTaxRate" inputmode="decimal" placeholder="Tax % (0 = none)" autocomplete="off"><input id="esTaxLabel" placeholder="Tax label, e.g. HST 13%" autocomplete="off"></div>
   <select id="esCurrency"><option>CAD</option><option>USD</option><option>EUR</option></select>
   <div class="err" id="esErr"></div>
   <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="esSave">Save</button></div>

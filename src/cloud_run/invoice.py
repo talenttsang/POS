@@ -158,6 +158,8 @@ def build_invoice_pdf(sale, items, venue, bill_to=None):
     totals = [("Subtotal:", money(sale["subtotal"], cur), False)]
     if float(sale["discount_total"] or 0) > 0:
         totals.append(("Discount:", "-" + money(sale["discount_total"], cur), False))
+    if float(sale.get("tax_total") or 0) > 0:
+        totals.append((f"{sale.get('tax_label') or 'Tax'}:", money(sale["tax_total"], cur), False))
     totals.append(("Grand total:", money(sale["grand_total"], cur), True))
     if sale.get("refund_amount"):
         reason = f" ({sale['refund_reason']})" if sale.get("refund_reason") else ""

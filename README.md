@@ -187,8 +187,10 @@ are applied once each, in name order, by `apply_migration.py`.
 
 Rules the database enforces, so no register build can disagree:
 
-- `grand_total = subtotal - discount_total`. There is no tax handling anywhere:
-  the price on the shelf is what the customer pays.
+- `grand_total = subtotal - discount_total + tax_total`. Tax is the venue's
+  `tax_rate` (admin portal, Tax %; the Markham store is HST 13%) applied to
+  what is left after the discount, and `tax_label` is printed on invoices.
+  A venue with rate 0 sells tax-free.
 - An inspection order records `deposit_total` and `amount_paid` equals it;
   a normal sale has no deposit and `amount_paid` equals `grand_total`.
 - Cash sales must carry `cash_received`, and `change_given` must equal

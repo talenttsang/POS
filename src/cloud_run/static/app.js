@@ -319,13 +319,17 @@
     const entered = Math.max(0, state.discount || 0);
     const percent = state.discountMode === 'percent' ? Math.min(entered, 100) : null;
     const discount = Math.min(cents(percent === null ? entered : subtotal * percent / 100), subtotal);
-    const total = cents(subtotal - discount);
-    return { subtotal, discount, total, percent };
+    // The venue's sales tax goes on top of what is left after the discount; the server recomputes it.
+    const rate = Number(currentEvent()?.taxRate || 0);
+    const tax = cents((subtotal - discount) * rate);
+    const total = cents(subtotal - discount + tax);
+    return { subtotal, discount, tax, taxLabel: currentEvent()?.taxLabel || 'Tax', total, percent };
   };
 
   const totalsHtml = (t) => `
     <div class="trow"><span>Subtotal</span><span class="money">${money(t.subtotal)}</span></div>
     ${t.discount ? `<div class="trow"><span>Discount${t.percent ? ` (${t.percent}%)` : ''}</span><span class="money">−${money(t.discount)}</span></div>` : ''}
+    ${t.tax ? `<div class="trow"><span>${esc(t.taxLabel)}</span><span class="money">${money(t.tax)}</span></div>` : ''}
     <div class="trow grand"><span>Total</span><span class="money">${money(t.total)}</span></div>`;
 
   const renderCart = () => {
@@ -617,6 +621,7 @@
       <div class="totals" style="padding:0">
         <div class="trow"><span>Subtotal</span><span class="money">${money(o.subtotal)}</span></div>
         ${Number(o.discount) ? `<div class="trow"><span>Discount</span><span class="money">−${money(o.discount)}</span></div>` : ''}
+        ${Number(o.tax) ? `<div class="trow"><span>${esc(o.taxLabel || 'Tax')}</span><span class="money">${money(o.tax)}</span></div>` : ''}
         <div class="trow grand"><span>Total</span><span class="money">${money(o.total)}</span></div>
         ${o.paymentMethod === 'card' ? '<div class="trow"><span>Paid by card</span><span>Clover Flex</span></div>' : `<div class="trow"><span>Cash received</span><span class="money">${money(o.cashReceived)}</span></div>
         <div class="trow"><span>Change</span><span class="money">${money(o.change)}</span></div>`}
