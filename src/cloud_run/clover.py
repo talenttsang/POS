@@ -73,7 +73,7 @@ class Client:
         return None
 
     def charges_by_order(self, store, order_id):
-        r = self._call("GET", "/clover/charges-by-order", params={"order_id": order_id, "store": store, "storehash": store})
+        r = self._call("GET", "/clover/charges-by-order", params={"order_id": order_id, "store": store})
         return r
 
     # -- money --------------------------------------------------------------
@@ -81,7 +81,7 @@ class Client:
         """Start a charge on the reader and wait for the customer. Returns
         (outcome, payment_id, message, raw) with outcome paid | failed | unknown."""
         path = "/api/clover/send-payment-sandbox" if self.sandbox else "/api/clover/send-payment"
-        body = {"amount": int(amount_minor), "storehash": store, "orderId": order_id}
+        body = {"amount": int(amount_minor), "store": store, "orderId": order_id}
         if device:
             body["device"] = device
         if note:
@@ -93,7 +93,7 @@ class Client:
         return self._outcome(r)
 
     def refund(self, store, payment_id, amount_minor, order_id):
-        body = {"storehash": store, "paymentId": payment_id, "amount": int(amount_minor), "orderId": order_id}
+        body = {"store": store, "paymentId": payment_id, "amount": int(amount_minor), "orderId": order_id}
         r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{order_id}"}, timeout=120)
         outcome, rid, message, raw = self._outcome(r)
         if outcome != "paid":
