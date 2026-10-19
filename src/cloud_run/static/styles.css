@@ -93,7 +93,7 @@ input { font: inherit; color: inherit; }
 .btn.primary { background: var(--accent); color: #fff; }
 .btn.ghost { background: var(--chip); }
 .btn.danger { background: #fdecea; color: var(--danger); }
-.btn.card { background: var(--ink); color: #fff; }
+.btn.pay-card { background: var(--ink); color: #fff; }
 .cta .btn { flex: 1; min-width: 0; height: 54px; }
 
 /* Pay */
