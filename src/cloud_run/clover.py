@@ -36,9 +36,8 @@ class Client:
         # answers 500 to an origin it does not list).
         self.origin = os.environ.get("CLOVER_ORIGIN")
         self.sandbox = os.environ.get("CLOVER_SANDBOX") == "1"
-        # The proxy also takes the BigCommerce store hash the other registers send
-        # (it selects the merchant alongside the branch). Blank unless configured.
-        self.storehash = os.environ.get("CLOVER_STOREHASH", "")
+        # No storehash anywhere: that field is the other registers' BigCommerce store,
+        # and this register has none. The proxy routes on branch.
         self._get_secret = get_secret
 
     def _headers(self, extra=None):
@@ -70,7 +69,7 @@ class Client:
 
     # -- lookups ------------------------------------------------------------
     def devices(self, store):
-        r = self._call("GET", "/api/get-clover-devices", params={"storehash": self.storehash, "store": store})
+        r = self._call("GET", "/api/get-clover-devices", params={"store": store})
         return r.get("elements") if isinstance(r, dict) else r
 
     def roster(self, store):
@@ -103,8 +102,7 @@ class Client:
     def payment_status(self, store, ref, amount_minor):
         """Did this attempt complete on Clover? {"paid": bool, "paymentId", "cloverOrderId"}."""
         r = self._call("GET", "/api/clover/payment-status",
-                       params={"storehash": self.storehash, "orderId": ref, "branch": store,
-                               "amount": int(amount_minor), "paymentRef": ref})
+                       params={"orderId": ref, "branch": store, "amount": int(amount_minor), "paymentRef": ref})
         return r if isinstance(r, dict) else {"paid": False}
 
     # -- money --------------------------------------------------------------
@@ -115,8 +113,7 @@ class Client:
         # The same body the front-desk helper sends: branch picks the Clover token and
         # reader on the proxy; paymentRef is Clover's externalPaymentId and must be new
         # for every attempt, which our per-attempt record id is.
-        body = {"device": device, "amount": int(amount_minor), "storehash": self.storehash,
-                "orderId": ref, "branch": store, "store": store, "paymentRef": ref}
+        body = {"device": device, "amount": int(amount_minor), "orderId": ref, "branch": store, "store": store, "paymentRef": ref}
         if note:
             body["note"] = note
         try:
@@ -126,12 +123,11 @@ class Client:
         return self._outcome(r)
 
     def refund(self, store, device, payment_id, amount_minor, ref):
-        """Refund to the original card. The body is exactly what superhairpieces-pos
-        sends (convex/lib/refundMoney.ts cardRefundRequestSchema): paymentId,
-        storeHash, amount in minor units, deviceId, branch. The proxy wakes the
-        reader before refunding, so this can take a while."""
-        body = {"paymentId": payment_id, "storeHash": self.storehash or store, "amount": int(amount_minor),
-                "deviceId": device, "branch": store}
+        """Refund to the original card, as superhairpieces-pos sends it
+        (convex/lib/refundMoney.ts cardRefundRequestSchema) minus the BigCommerce
+        storeHash: paymentId, amount in minor units, deviceId, branch. The proxy
+        wakes the reader before refunding, so this can take a while."""
+        body = {"paymentId": payment_id, "amount": int(amount_minor), "deviceId": device, "branch": store}
         r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{ref}"}, timeout=170)
         # The refund reply is not shaped like a payment: any 200 from the route is a
         # refund Clover accepted; anything else carries Clover's reason.
