@@ -121,10 +121,21 @@ class Client:
         body = {"storehash": self.storehash, "branch": store, "store": store, "paymentId": payment_id,
                 "amount": int(amount_minor), "orderId": ref}
         r = self._call("POST", "/clover/refund", body, headers={"Idempotency-Key": f"refund-{ref}"}, timeout=120)
-        outcome, rid, message, raw = self._outcome(r)
-        if outcome != "paid":
-            raise CloverError(message or "refund failed")
-        return rid, raw
+        # The refund reply is not shaped like a payment: any 200 from the route is a
+        # refund Clover accepted; anything else carries Clover's reason.
+        if not isinstance(r, dict):
+            raise CloverError("unreadable reply from the Clover proxy")
+        try:
+            code = int(r.get("status") or 200)
+        except (TypeError, ValueError):
+            code = 200
+        data = r.get("data")
+        if code != 200:
+            msg = data.get("message") if isinstance(data, dict) else (str(data or r.get("error") or ""))
+            raise CloverError(msg or f"Clover returned {code}")
+        d = data if isinstance(data, dict) else {}
+        rid = d.get("id") or (d.get("refund") or {}).get("id") if isinstance(d.get("refund"), dict) else d.get("id")
+        return rid, r
 
     @staticmethod
     def _outcome(r):
