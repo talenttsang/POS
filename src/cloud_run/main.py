@@ -1324,7 +1324,9 @@ def refund(number):
                 abort(400, "refund amount out of range")
             full = amount == money(t["amount_paid"])
             method = "cash"
-            if t["payment_method"] == "card":
+            # A card sale is refunded to the card through Clover unless the admin chooses cash
+            # (for example when Clover refuses the refund).
+            if t["payment_method"] == "card" and str(body.get("method") or "card") != "cash":
                 # Money goes back to the same card through the Clover proxy before we record it.
                 cp = conn.execute("select * from pos_card_payments where transaction_id = %s", (t["id"],)).fetchone()
                 if not cp or not cp["clover_payment_id"]:
@@ -1556,6 +1558,7 @@ def health():
 @app.errorhandler(403)
 @app.errorhandler(404)
 @app.errorhandler(409)
+@app.errorhandler(502)
 @app.errorhandler(503)
 def api_error(err):
     if request.path.startswith("/api/"):

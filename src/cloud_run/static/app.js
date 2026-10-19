@@ -628,26 +628,34 @@
       $('refundNum').textContent = `#${o.number}`;
       $('refundReason').value = ''; $('refundAmount').value = ''; $('refundCode').value = ''; $('refundAdminName').value = ''; $('refundAdminPin').value = ''; $('refundErr').textContent = '';
       $('refundApproval').hidden = state.config.role === 'admin';
+      $('refundCash').hidden = true;
       $('refundHow').textContent = o.paymentMethod === 'card' ? 'The money goes back to the customer\'s card through Clover; an admin has to approve.' : 'Refunds are paid back in cash and need an admin to approve.';
       $('refundAmount').placeholder = `Amount (blank = full ${money(o.amountPaid)})`;
       openSheet('refundSheet');
     });
   };
 
-  $('refundConfirm').addEventListener('click', async () => {
+  const sendRefund = async (method) => {
     const o = state.orders.find((x) => x.number === state.selectedOrder);
     if (!o) return;
     const body = { reason: $('refundReason').value, code: $('refundCode').value, adminName: $('refundAdminName').value, adminPin: $('refundAdminPin').value };
     if ($('refundAmount').value) body.amount = Number($('refundAmount').value);
+    if (method) body.method = method;
     if (!body.reason) { $('refundErr').textContent = 'Pick a reason'; return; }
     try {
       await api(`/api/sales/${o.number}/refund`, { method: 'POST', body });
       closeSheets();
-      toast(`Refunded sale #${o.number}`);
+      toast(`Refunded sale #${o.number}${method === 'cash' && o.paymentMethod === 'card' ? ' in cash' : ''}`);
       await loadOrders();
       renderDetail();
-    } catch (err) { $('refundErr').textContent = err.message; }
-  });
+    } catch (err) {
+      $('refundErr').textContent = err.message;
+      // Clover would not take the refund back to the card: let the admin hand cash over instead.
+      if (o.paymentMethod === 'card' && !method) $('refundCash').hidden = false;
+    }
+  };
+  $('refundConfirm').addEventListener('click', () => sendRefund());
+  $('refundCash').addEventListener('click', () => sendRefund('cash'));
 
   // ------------------------------------------------------------ analytics (admins)
 
