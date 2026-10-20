@@ -1260,7 +1260,17 @@ def plan_picks(conn, row):
                  and status = 'ok'""", (row["transaction_id"], row["line_no"])).fetchone()
         picks = ((sold or {}).get("response") or {}).get("picks") if sold else None
         if picks:
-            return [(p["location"], p["quantity"]) for p in picks]
+            # Bins get renamed and recreated: a bin the sale took from may be gone, so
+            # anything bound for a missing bin goes to the warehouse's top-level location.
+            try:
+                live = SV.locations(row["warehouse"])
+            except skuvault.SkuVaultError:
+                live = None
+            out = {}
+            for p in picks:
+                loc = p["location"] if live is None or str(p["location"]).upper() in live else row["warehouse"]
+                out[loc] = out.get(loc, 0) + p["quantity"]
+            return list(out.items())
         return [(row["warehouse"], row["quantity"])]      # the warehouse's own top-level location
     bins = SV.bins(row["warehouse"], row["sku"])
     need, picks = row["quantity"], []

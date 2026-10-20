@@ -129,6 +129,29 @@ class Client:
                 out[sku] = n
         return out
 
+    def locations(self, warehouse, max_age=600):
+        """Codes a write call can name in a warehouse: its top-level location and every bin."""
+        key = ("locs", warehouse.upper())
+        with self._lock:
+            hit = self._stock.get(key)
+            if hit and time.time() - hit[0] < max_age:
+                return hit[1]
+        codes, page = set(), 0
+        while True:
+            r = self._post("inventory/getLocations", {"PageSize": 1000, "PageNumber": page}, retries=2)
+            items = r.get("Items") or []
+            for l in items:
+                if str(l.get("WarehouseCode", "")).upper() == warehouse.upper():
+                    code = l.get("ContainerCode") or l.get("LocationCode")
+                    if code:
+                        codes.add(str(code).upper())
+            if len(items) < 1000:
+                break
+            page += 1
+        with self._lock:
+            self._stock[key] = (time.time(), codes)
+        return codes
+
     def bins(self, warehouse, sku, max_age=0):
         """[(bin to write to, qty)] holding a SKU in a warehouse, fullest first. Fresh by default."""
         by_loc = self._dump(max_age, retries=2).get(warehouse.upper(), {}).get(sku, {})
