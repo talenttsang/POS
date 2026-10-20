@@ -351,8 +351,8 @@ def event_fields(body, creating):
         fields["is_active"] = bool(body["isActive"])
     if fields.get("starts_on") and fields.get("ends_on") and fields["ends_on"] < fields["starts_on"]:
         abort(400, "end date is before start date")
-    if bool(fields.get("sv_warehouse")) != bool(fields.get("sv_location")):
-        abort(400, "give both the SkuVault warehouse and location, or neither")
+    if fields.get("sv_location") and not (fields.get("sv_warehouse") or body.get("svWarehouse")):
+        abort(400, "a SkuVault location needs its warehouse")
     if fields.get("clover_device") and not (fields.get("clover_store") or body.get("cloverStore")):
         abort(400, "a Clover device needs a Clover store key")
     if fields.get("sv_warehouse"):
@@ -887,10 +887,11 @@ def products():
 def venue_stock(event):
     """{sku: on hand} at the venue's SkuVault location, or None when the venue
     has no location or SkuVault cannot be reached right now."""
-    if not event or not event.get("sv_location"):
+    if not event or not event.get("sv_warehouse"):
         return None
     try:
-        return SV.stock(event["sv_warehouse"], event["sv_location"])
+        # No location set: the whole warehouse, every bin in it.
+        return SV.stock(event["sv_warehouse"], event.get("sv_location"))
     except skuvault.SkuVaultError as exc:
         app.logger.warning("stock unavailable: %s", exc)
         return None
@@ -1225,21 +1226,52 @@ REASON_OUT = os.environ.get("SKUVAULT_REASON_OUT", "Sold")
 REASON_IN = os.environ.get("SKUVAULT_REASON_IN", "Return (Bricks & Mortar)")
 
 
+AUTO_BIN = "*"   # pos_inventory_moves.location before a bin is picked
+
+
 def queue_moves(conn, txn, event, direction, lines):
-    if not event or not event.get("sv_location"):
+    if not event or not event.get("sv_warehouse"):
         return
+    loc = event.get("sv_location") or AUTO_BIN
     for l in lines:
         conn.execute(
             """insert into pos_inventory_moves (transaction_id, line_no, sku, quantity, direction, warehouse, location)
                values (%s, %s, %s, %s, %s, %s, %s) on conflict (transaction_id, line_no, direction) do nothing""",
-            (txn["id"], l["line_no"], l["sku"], l["quantity"], direction, event["sv_warehouse"], event["sv_location"]),
+            (txn["id"], l["line_no"], l["sku"], l["quantity"], direction, event["sv_warehouse"], loc),
         )
         # Reflect it in the register straight away; the worker confirms with SkuVault.
-        SV.adjust(event["sv_warehouse"], event["sv_location"], l["sku"], -l["quantity"] if direction == "out" else l["quantity"])
+        SV.adjust(event["sv_warehouse"], None if loc == AUTO_BIN else loc, l["sku"],
+                  -l["quantity"] if direction == "out" else l["quantity"])
 
 
 def start_move_worker():
     threading.Thread(target=process_moves, daemon=True).start()
+
+
+def plan_picks(conn, row):
+    """Where in the warehouse this move happens: [(bin, qty)].
+    A sale takes from the bins that hold the SKU, fullest first; a refund puts
+    units back where its sale took them from."""
+    if row["location"] != AUTO_BIN:
+        return [(row["location"], row["quantity"])]
+    if row["direction"] == "in":
+        sold = conn.execute(
+            """select response from pos_inventory_moves where transaction_id = %s and line_no = %s and direction = 'out'
+                 and status = 'ok'""", (row["transaction_id"], row["line_no"])).fetchone()
+        picks = ((sold or {}).get("response") or {}).get("picks") if sold else None
+        if picks:
+            return [(p["location"], p["quantity"]) for p in picks]
+        return [(row["warehouse"], row["quantity"])]      # the warehouse's own top-level location
+    bins = SV.bins(row["warehouse"], row["sku"])
+    need, picks = row["quantity"], []
+    for code, qty in bins:
+        take = min(need, qty)
+        if take:
+            picks.append((code, take)); need -= take
+        if not need:
+            return picks
+    have = row["quantity"] - need
+    raise skuvault.SkuVaultError(f"only {have} of {row['sku']} in {row['warehouse']}; receive stock into a bin, then retry")
 
 
 def process_moves():
@@ -1255,22 +1287,39 @@ def process_moves():
             ).fetchall()
             groups = {}
             for r in rows:
-                groups.setdefault((r["transaction_id"], r["direction"], r["warehouse"], r["location"]), []).append(r)
-            for (txn_id, direction, wh, loc), group in groups.items():
+                groups.setdefault((r["transaction_id"], r["direction"], r["warehouse"]), []).append(r)
+            for (txn_id, direction, wh), group in groups.items():
                 number = group[0]["transaction_number"]
                 note = f"POS sale #{number}" if direction == "out" else f"POS refund of sale #{number}"
-                ids = [r["id"] for r in group]
-                try:
-                    resp = SV.move(direction, wh, loc, [{"sku": r["sku"], "quantity": r["quantity"], "note": note} for r in group],
-                                   REASON_OUT if direction == "out" else REASON_IN)
-                    conn.execute("update pos_inventory_moves set status = 'ok', attempts = attempts + 1, last_error = null, response = %s, "
-                                 "done_at = now(), updated_at = now() where id = any(%s)", (json.dumps(resp)[:2000], ids))
-                    done += len(ids)
-                except skuvault.SkuVaultError as exc:
-                    app.logger.warning("inventory move failed for sale #%s: %s", number, exc)
-                    conn.execute("update pos_inventory_moves set status = 'failed', attempts = attempts + 1, last_error = %s, "
-                                 "updated_at = now() where id = any(%s)", (str(exc)[:500], ids))
-                    failed += len(ids)
+                planned = []
+                for r in group:
+                    try:
+                        planned.append((r, plan_picks(conn, r)))
+                    except skuvault.SkuVaultError as exc:
+                        conn.execute("update pos_inventory_moves set status = 'failed', attempts = attempts + 1, last_error = %s, "
+                                     "updated_at = now() where id = %s", (str(exc)[:500], r["id"]))
+                        failed += 1
+                if planned:
+                    items = [{"sku": r["sku"], "quantity": q, "location": loc, "note": note} for r, picks in planned for loc, q in picks]
+                    try:
+                        resp = SV.move_items(direction, wh, items, REASON_OUT if direction == "out" else REASON_IN)
+                        for r, picks in planned:
+                            conn.execute(
+                                """update pos_inventory_moves set status = 'ok', attempts = attempts + 1, last_error = null,
+                                     location = %s, response = %s, done_at = now(), updated_at = now() where id = %s""",
+                                ("+".join(loc for loc, _ in picks)[:200],
+                                 json.dumps({"picks": [{"location": loc, "quantity": q} for loc, q in picks], "skuvault": resp})[:4000],
+                                 r["id"]))
+                            if direction == "out":
+                                # Picking re-read SkuVault from before this sale left; show it gone again.
+                                for loc, q in picks:
+                                    SV.adjust(wh, loc, r["sku"], -q)
+                        done += len(planned)
+                    except skuvault.SkuVaultError as exc:
+                        app.logger.warning("inventory move failed for sale #%s: %s", number, exc)
+                        conn.execute("update pos_inventory_moves set status = 'failed', attempts = attempts + 1, last_error = %s, "
+                                     "updated_at = now() where id = any(%s)", (str(exc)[:500], [r["id"] for r, _ in planned]))
+                        failed += len(planned)
                 conn.commit()
     except Exception as exc:  # the worker must never take the request thread down
         app.logger.exception("inventory worker: %s", exc)

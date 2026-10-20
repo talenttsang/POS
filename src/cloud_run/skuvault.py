@@ -79,18 +79,20 @@ class Client:
             raise SkuVaultError(f"SkuVault has no warehouse {code}")
         return wid
 
-    def stock(self, warehouse, location, max_age=STOCK_TTL):
-        """{sku: quantity} at one location. Cached; SKUs with no stock are absent."""
-        key = (warehouse.upper(), location.upper())
+    def _dump(self, max_age, retries=0):
+        """The whole account's stock, {WAREHOUSE: {sku: {LOCATION: qty}}}, cached.
+        A bin inside a warehouse reads as PARENT[BIN], e.g. PKP[1L1]."""
         with self._lock:
-            hit = self._stock.get(key)
+            hit = self._stock.get("dump")
             if hit and time.time() - hit[0] < max_age:
                 return hit[1]
-        quantities = {}
+        dump = {}
         page = 0
         while True:
             try:
-                r = self._post("inventory/getInventoryByLocation", {"PageSize": 10000, "PageNumber": page}, retries=0)
+                # With nothing cached yet, wait out one throttle rather than show no stock at all.
+                r = self._post("inventory/getInventoryByLocation", {"PageSize": 10000, "PageNumber": page},
+                               retries=retries if hit else max(retries, 1))
             except SkuVaultError:
                 # Throttled or down: a stale answer beats none for a register showing badges.
                 if hit:
@@ -99,24 +101,74 @@ class Client:
             items = r.get("Items") or {}
             for sku, rows in items.items():
                 for row in rows:
-                    if (str(row.get("WarehouseCode", "")).upper(), str(row.get("LocationCode", "")).upper()) == key:
-                        quantities[sku] = quantities.get(sku, 0) + int(row.get("Quantity") or 0)
+                    wh = str(row.get("WarehouseCode", "")).upper()
+                    loc = str(row.get("LocationCode", "")).upper()
+                    by_loc = dump.setdefault(wh, {}).setdefault(sku, {})
+                    by_loc[loc] = by_loc.get(loc, 0) + int(row.get("Quantity") or 0)
             if len(items) < 10000:
                 break
             page += 1
         with self._lock:
-            self._stock[key] = (time.time(), quantities)   # (fetched at, {sku: qty})
-        return quantities
+            self._stock["dump"] = (time.time(), dump)
+        return dump
+
+    @staticmethod
+    def bin_code(location):
+        """What a write call names a location by: PKP[1L1] -> 1L1, PKP -> PKP."""
+        m = re.search(r"\[([^\]]+)\]$", location or "")
+        return m.group(1) if m else location
+
+    def stock(self, warehouse, location=None, max_age=STOCK_TTL):
+        """{sku: on hand} across a warehouse, or at one location (or bin) of it."""
+        wh = self._dump(max_age).get(warehouse.upper(), {})
+        want = location.upper() if location else None
+        out = {}
+        for sku, by_loc in wh.items():
+            n = sum(q for loc, q in by_loc.items() if want is None or loc == want or self.bin_code(loc) == want)
+            if n:
+                out[sku] = n
+        return out
+
+    def bins(self, warehouse, sku, max_age=0):
+        """[(bin to write to, qty)] holding a SKU in a warehouse, fullest first. Fresh by default."""
+        by_loc = self._dump(max_age, retries=2).get(warehouse.upper(), {}).get(sku, {})
+        return sorted(((self.bin_code(loc), q) for loc, q in by_loc.items() if q > 0), key=lambda x: -x[1])
 
     def adjust(self, warehouse, location, sku, delta):
         """Shift the cached quantity after a move so the register reflects it at once."""
-        key = (warehouse.upper(), location.upper())
         with self._lock:
-            hit = self._stock.get(key)
-            if hit:
-                hit[1][sku] = max(0, hit[1].get(sku, 0) + delta)
+            hit = self._stock.get("dump")
+            if not hit:
+                return
+            by_loc = hit[1].setdefault(warehouse.upper(), {}).setdefault(sku, {})
+            if location:
+                key = next((k for k in by_loc if k == location.upper() or self.bin_code(k) == location.upper()), location.upper())
+                by_loc[key] = max(0, by_loc.get(key, 0) + delta)
+                return
+            if delta > 0:
+                key = next(iter(by_loc), warehouse.upper())
+                by_loc[key] = by_loc.get(key, 0) + delta
+                return
+            need = -delta
+            for k in sorted(by_loc, key=lambda k: -by_loc[k]):
+                take = min(need, by_loc[k]); by_loc[k] -= take; need -= take
+                if not need:
+                    break
 
     # -- moves --------------------------------------------------------------
+    def move_items(self, direction, warehouse, items, reason):
+        """Remove ('out') or add ('in') [{sku, quantity, location, note}] in one bulk
+        call, each item at its own location or bin. Raises on any item error."""
+        wid = self.warehouse_id(warehouse)
+        body = [{"Sku": i["sku"], "WarehouseId": wid, "LocationCode": i["location"], "Quantity": int(i["quantity"]),
+                 "Reason": reason, "Note": i.get("note") or ""} for i in items]
+        path = "inventory/removeItemBulk" if direction == "out" else "inventory/addItemBulk"
+        r = self._post(path, {"Items": body}, retries=2)
+        errors = r.get("Errors") or []
+        if errors or str(r.get("Status", "OK")).upper() not in ("OK", "SUCCESS", ""):
+            raise SkuVaultError(f"{path}: {json.dumps(r)[:500]}")
+        return r
+
     def move(self, direction, warehouse, location, lines, reason):
         """Remove (direction 'out') or add ('in') lines [{sku, quantity, note}] at a
         location in one bulk call. Returns the raw response; raises on any

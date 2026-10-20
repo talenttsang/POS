@@ -114,14 +114,18 @@ Secret Manager Secret Accessor for the two secrets above.
 
 ## Inventory sync with SkuVault
 
-A store can name the SkuVault warehouse and location that holds its stock
-(admin portal, store form; the Markham store is `IT1` / `PKP`). When it does:
+A store names the SkuVault warehouse that holds its stock (admin portal,
+store form; the Markham store is warehouse `PKP`, "PIKUMI Pacific Mall"). An
+optional bin narrows it to one location. When a warehouse is set:
 
 - product cards show the on-hand quantity at that location ("3 in stock",
   "out of stock") and a cart line warns when it exceeds stock; selling is
   not blocked;
-- each sale removes the sold units from that location with reason `Sold`,
-  and a full refund adds them back with reason `Return (Bricks & Mortar)`
+- each sale takes the sold units from the bins that hold them, fullest first,
+  splitting across bins when one is short, with reason `Sold`; a full refund
+  puts them back in the same bins with reason `Return (Bricks & Mortar)`.
+  Bins read as `PKP[1L1]` and are written as `1L1`. A sale larger than the
+  warehouse holds leaves its move failed until stock is received
   (both must exist under SkuVault Admin > Reasons; override with
   `SKUVAULT_REASON_OUT` / `SKUVAULT_REASON_IN`);
 - every move is a row in `pos_inventory_moves`, sent by a background worker

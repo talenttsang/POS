@@ -137,7 +137,7 @@
       const state = !e.isActive ? ['refunded', 'Archived'] : e.kind === 'store' ? ['', 'Open'] : (e.startsOn <= t && t <= e.endsOn) ? ['', 'Running'] : e.startsOn > t ? ['partial', 'Upcoming'] : ['', 'Past'];
       return `<tr class="${e.isActive ? '' : 'inactive'}" data-id="${esc(e.id)}">
         <td><b>${esc(e.name)}</b><div class="hint">${esc(e.code)}</div></td>
-        <td>${e.kind === 'store' ? `${esc(e.address || '')}${e.svLocation ? `<div class="hint">SkuVault ${esc(e.svWarehouse)} / ${esc(e.svLocation)}</div>` : ''}${e.cloverStore ? `<div class="hint">Clover ${esc(e.cloverStore)}${e.cloverDevice ? ` · Flex ${esc(e.cloverDevice)}` : ''}</div>` : ''}` : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
+        <td>${e.kind === 'store' ? `${esc(e.address || '')}${e.svWarehouse ? `<div class="hint">SkuVault ${esc(e.svWarehouse)}${e.svLocation ? ` / ${esc(e.svLocation)}` : ' · all bins'}</div>` : ''}${e.cloverStore ? `<div class="hint">Clover ${esc(e.cloverStore)}${e.cloverDevice ? ` · Flex ${esc(e.cloverDevice)}` : ''}</div>` : ''}` : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
         <td>${esc(e.currency)}${Number(e.taxRate) ? `<div class="hint">${esc(e.taxLabel || `${(Number(e.taxRate) * 100).toFixed(2).replace(/\.?0+$/, '')}% tax`)}</div>` : '<div class="hint">no tax</div>'}</td>
         <td><span class="status ${state[0]}">${state[1]}</span></td>
         <td class="actions">
