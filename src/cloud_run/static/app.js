@@ -179,8 +179,10 @@
 
   // ------------------------------------------------------------ catalogue
 
-  // "In stock" filter: remembered per device; only offered where the venue has a stock feed.
-  state.inStock = (() => { try { return localStorage.getItem('pos.inStock') === '1'; } catch { return false; } })();
+  // "In stock" filter: on every time the register opens; a tap shows everything for
+  // the moment. Only offered where the venue has a stock feed.
+  state.inStock = true;
+  try { localStorage.removeItem('pos.inStock'); } catch { /* older builds remembered it per device */ }
   const loadCatalogue = async () => {
     const cats = await api(`/api/categories?${new URLSearchParams({ event: state.eventId || '' })}`);
     const hasStock = cats.some((c) => c.in_stock != null);
@@ -242,7 +244,6 @@
   $('catChips').addEventListener('click', (e) => {
     if (e.target.closest('#inStockChip')) {
       state.inStock = !state.inStock;
-      try { localStorage.setItem('pos.inStock', state.inStock ? '1' : '0'); } catch { /* per-device nicety only */ }
       loadCatalogue().catch((err) => toast(err.message));
       return;
     }
