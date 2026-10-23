@@ -166,8 +166,9 @@
       </div>
       <div class="an-note hint" id="anRangeNote"></div>
       <div class="kpis" id="anKpis"></div>
+      <div class="pay-split" id="anPay" aria-label="By payment method"></div>
       <div class="an-grid">
-        <figure class="fig" id="figDay"><figcaption><h3>Net revenue by day</h3><span class="hint">Sales minus cash refunds, Toronto time</span></figcaption><div class="plot"></div></figure>
+        <figure class="fig" id="figDay"><figcaption><h3>Net revenue by day</h3><span class="hint">Sales minus refunds, Toronto time</span></figcaption><div class="plot"></div></figure>
         <figure class="fig" id="figHour"><figcaption><h3>Revenue by hour of day</h3><span class="hint">All days in range combined</span></figcaption><div class="plot"></div></figure>
         <figure class="fig" id="figCategory"><figcaption><h3>Revenue by category</h3><span class="hint">Line totals before whole-sale discounts</span></figcaption><div class="plot"></div></figure>
         <figure class="fig" id="figStaff"><figcaption><h3>Revenue by cashier</h3><span class="hint">Sale totals per person who rang them</span></figcaption><div class="plot"></div></figure>
@@ -178,7 +179,7 @@
         <div class="panel"><h3>By day</h3><div class="tbl" id="tblDay"></div></div>
         <div class="panel"><h3>By category</h3><div class="tbl" id="tblCategory"></div></div>
       </div>
-      <div class="hint an-foot">Definitions: net revenue = sale totals minus cash refunds. Gross margin = line revenue minus unit cost × quantity, over lines whose product has a cost. Discounts are whole-sale amounts and are not allocated to products, so category and product revenue are before discounts.</div>
+      <div class="hint an-foot">Definitions: net revenue = sale totals minus refunds. Cash and card net count each refund by how it was paid back, so a card sale refunded in cash comes off cash. Gross margin = line revenue minus unit cost × quantity, over lines whose product has a cost. Discounts are whole-sale amounts and are not allocated to products, so category and product revenue are before discounts.</div>
     </div>
   </section>
 
@@ -189,6 +190,7 @@
         <div class="search">
           <input id="orderSearch" type="text" placeholder="Sale # or staff name" autocomplete="off" aria-label="Search sales">
         </div>
+        <div class="chips" id="orderMethod"><button class="chip on" data-method="">All</button><button class="chip" data-method="cash">Cash</button><button class="chip" data-method="card">Card</button></div>
         <button class="chip" id="refreshOrders">Refresh</button>
       </div>
       <table class="summary-table" id="summaryTable"></table>

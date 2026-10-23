@@ -705,7 +705,7 @@
       const q = $('orderSearch').value.trim();
       const ev = state.eventId || '';
       const [orders, summary] = await Promise.all([
-        api(`/api/sales?${new URLSearchParams({ q, limit: 100, event: ev })}`),
+        api(`/api/sales?${new URLSearchParams({ q, limit: 100, event: ev, method: state.orderMethod || '' })}`),
         api(`/api/summary?${new URLSearchParams({ event: ev })}`),
       ]);
       state.orders = orders;
@@ -714,6 +714,14 @@
     } catch (err) { toast(err.message); }
   };
 
+  const payTag = (o) => `<span class="pay pm-${o.paymentMethod === 'card' ? 'card' : 'cash'}">${o.paymentMethod === 'card' ? 'Card' : 'Cash'}</span>`
+    + (o.refundMethod && o.refundMethod !== o.paymentMethod ? ` <span class="pay pm-${o.refundMethod}">refunded ${o.refundMethod === 'card' ? 'to card' : 'in cash'}</span>` : '');
+  $('orderMethod').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-method]'); if (!b) return;
+    state.orderMethod = b.dataset.method;
+    document.querySelectorAll('#orderMethod .chip').forEach((c) => c.classList.toggle('on', c === b));
+    loadOrders();
+  });
   const statusOf = (o) => (o.status === 'refunded' ? ['refunded', 'Refunded'] : o.refundAmount ? ['partial', 'Part refunded'] : ['completed', 'Paid']);
 
   const renderOrders = () => {
@@ -722,7 +730,7 @@
       const when = new Date(o.soldAt).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
       return `<button class="order${state.selectedOrder === o.number ? ' on' : ''}" data-num="${o.number}">
         <div class="num">#${o.number}</div>
-        <div><div>${o.items.length} line${o.items.length === 1 ? '' : 's'} · ${esc(o.staff)}</div><div class="who">${when} · <span class="status ${cls}">${label}</span></div></div>
+        <div><div>${o.items.length} line${o.items.length === 1 ? '' : 's'} · ${esc(o.staff)}</div><div class="who">${when} · ${payTag(o)} <span class="status ${cls}">${label}</span></div></div>
         <div class="tot money">${money(o.total)}</div>
       </button>`;
     }).join('') : '<div class="empty">No sales yet.</div>';
@@ -730,8 +738,11 @@
 
   const renderSummary = (rows) => {
     if (!rows.length) { $('summaryTable').innerHTML = ''; return; }
-    $('summaryTable').innerHTML = `<tr><th>Day</th><th>Sales</th><th>Taken</th><th>Cash refunded</th><th>Net in drawer</th></tr>`
-      + rows.map((r) => `<tr><td>${esc(r.day)}</td><td>${r.sales}</td><td class="money">${money(r.amount_paid)}</td><td class="money">${money(r.cash_refunded)}</td><td class="money"><b>${money(r.net_cash_in_drawer)}</b></td></tr>`).join('');
+    $('summaryTable').innerHTML = `<tr><th rowspan="2">Day</th><th colspan="4" class="grp pm-cash">Cash · count against the drawer</th><th colspan="4" class="grp pm-card">Card · match to Clover</th></tr>
+      <tr><th>Sales</th><th>Taken</th><th>Refunded</th><th>Net</th><th>Sales</th><th>Taken</th><th>Refunded</th><th>Net</th></tr>`
+      + rows.map((r) => `<tr><td>${esc(r.day)}</td>
+        <td>${r.cash_sales}</td><td class="money">${money(r.cash_taken)}</td><td class="money">${money(r.cash_refunded)}</td><td class="money"><b>${money(r.cash_net)}</b></td>
+        <td>${r.card_sales}</td><td class="money">${money(r.card_taken)}</td><td class="money">${money(r.card_refunded)}</td><td class="money"><b>${money(r.card_net)}</b></td></tr>`).join('');
   };
 
   $('orderList').addEventListener('click', (e) => {
@@ -752,6 +763,7 @@
     $('orderDetail').innerHTML = `
       <h3>Sale #${o.number}</h3>
       <div class="muted">${new Date(o.soldAt).toLocaleString('en-CA')} · ${esc(o.staff)} · ${label}</div>
+      <div>${payTag(o)}</div>
       <div>${o.items.map((i) => `<div class="ps-line"><span>${i.quantity}× ${esc(i.name)}${Number(i.lineDiscount) ? ` <span class="muted">(−${money(i.lineDiscount)})</span>` : ''}</span><span class="money">${money(i.lineTotal)}</span></div>`).join('')}</div>
       <div class="totals" style="padding:0">
         <div class="trow"><span>Subtotal</span><span class="money">${money(o.subtotal)}</span></div>
@@ -888,7 +900,11 @@
     stackChart($('figStock'), d.stock.filter((x) => num(x.brought) > 0).map((x) => ({ label: x.category, sold: num(x.sold), total: num(x.brought), tip: `${x.category}: ${x.sold} of ${x.brought} units sold (${pct(num(x.sold) / num(x.brought) * 100)}) · ${money0(x.remaining_value)} of stock left at price` })));
     barChart($('figTop'), d.topProducts.slice(0, 12).map((x) => ({ label: x.name || x.sku, value: num(x.revenue), tip: `${x.name || x.sku}: ${money(num(x.revenue))} · ${x.units} units${x.margin != null ? ` · margin ${money(num(x.margin))}` : ''}${x.brought ? ` · ${x.units}/${x.brought} brought` : ''}` })), { labelWidth: 330 });
 
-    $('tblDay').innerHTML = table(['Day', 'Sales', 'Units', 'Sold', 'Refunds', 'Net'], d.byDay.map((x) => [x.day, x.sales, x.units, money(num(x.revenue)), money(num(x.refunds)), money(num(x.revenue) - num(x.refunds))]));
+    const pay = Object.fromEntries((d.byPayment || []).map((x) => [x.method, x]));
+    $('anPay').innerHTML = ['cash', 'card'].map((m) => { const x = pay[m] || { sales: 0, taken: 0, refunded: 0, net: 0 };
+      return `<div class="pay-tile pm-${m}"><div class="l"><span class="pay pm-${m}">${m === 'card' ? 'Card' : 'Cash'}</span> ${m === 'card' ? 'match to Clover' : 'count against the drawer'}</div>
+        <div class="v money">${money(num(x.net))}</div><div class="d">${x.sales} sale${Number(x.sales) === 1 ? '' : 's'} · ${money(num(x.taken))} taken · ${money(num(x.refunded))} refunded</div></div>`; }).join('');
+    $('tblDay').innerHTML = table(['Day', 'Sales', 'Units', 'Sold', 'Refunds', 'Net', 'Cash net', 'Card net'], d.byDay.map((x) => [x.day, x.sales, x.units, money(num(x.revenue)), money(num(x.refunds)), money(num(x.revenue) - num(x.refunds)), money(num(x.cash_net)), money(num(x.card_net))]));
     $('tblCategory').innerHTML = table(['Category', 'Units', 'Revenue', 'Cost', 'Margin'], d.byCategory.map((x) => [x.category, x.units, money(num(x.revenue)), x.cost_of_goods == null ? '—' : money(num(x.cost_of_goods)), x.cost_of_goods == null ? '—' : pct((num(x.revenue_with_cost) - num(x.cost_of_goods)) / num(x.revenue_with_cost) * 100)]));
   };
 

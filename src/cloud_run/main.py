@@ -1544,7 +1544,7 @@ def serialise_sale(t, items):
         "subtotal": s(t["subtotal"]), "discount": s(t["discount_total"]), "total": s(t["grand_total"]),
         "tax": s(t.get("tax_total")), "taxRate": s(t.get("tax_rate")), "taxLabel": t.get("tax_label"),
         "amountPaid": s(t["amount_paid"]), "cashReceived": s(t["cash_received"]), "change": s(t["change_given"]),
-        "refundAmount": s(t["refund_amount"]), "refundReason": t["refund_reason"],
+        "refundAmount": s(t["refund_amount"]), "refundReason": t["refund_reason"], "refundMethod": t.get("refund_method"),
         "refundedAt": t["refunded_at"].isoformat() if t["refunded_at"] else None,
         "note": t["note"], "soldAt": t["sold_at"].isoformat(),
         "items": [{"lineNo": i["line_no"], "sku": i["sku"], "name": i["product_name"], "category": i["category"],
@@ -1564,6 +1564,10 @@ def list_sales():
     if q:
         where += " and (transaction_number::text = %s or staff_name ilike %s)"
         params += [q, f"%{q}%"]
+    method = request.args.get("method", "")
+    if method in ("cash", "card"):
+        where += " and payment_method = %s"
+        params.append(method)
     params.append(limit)
     with pool().connection() as conn:
         txns = conn.execute(f"select * from pos_transactions where {where} order by sold_at desc limit %s", params).fetchall()
@@ -1655,14 +1659,30 @@ def invoice_pdf(number):
 @app.get("/api/summary")
 @require_unlock
 def summary():
+    """Per Toronto day, cash and card side by side for end-of-day reconciliation:
+    cash against the drawer count, card against Clover's batch. A refund counts on
+    the day and by the method it was paid back (a card sale refunded in cash comes
+    out of the drawer)."""
     event = event_from_request()
     rows = query(
-        """select sale_day::text as day, sales, inspection_deposits, amount_paid::text,
-                  cash_received::text, change_given::text, coalesce(cash_refunded, 0)::text as cash_refunded,
-                  net_cash_in_drawer::text
-           from pos_daily_cash_summary where location_id = %s and currency = %s order by sale_day desc limit 14""",
-        (event["code"], event["currency"]),
+        """with x as (
+             select (sold_at at time zone %s)::date as day, payment_method as m, 1 as n, amount_paid as taken, 0::numeric as refunded
+               from pos_transactions where event_id = %s and status <> 'void'
+             union all
+             select (refunded_at at time zone %s)::date, refund_method, 0, 0, refund_amount
+               from pos_transactions where event_id = %s and status <> 'void' and refunded_at is not null)
+           select day::text as day,
+                  sum(n) filter (where m = 'cash') as cash_sales, coalesce(sum(taken) filter (where m = 'cash'), 0)::text as cash_taken,
+                  coalesce(sum(refunded) filter (where m = 'cash'), 0)::text as cash_refunded,
+                  (coalesce(sum(taken) filter (where m = 'cash'), 0) - coalesce(sum(refunded) filter (where m = 'cash'), 0))::text as cash_net,
+                  sum(n) filter (where m = 'card') as card_sales, coalesce(sum(taken) filter (where m = 'card'), 0)::text as card_taken,
+                  coalesce(sum(refunded) filter (where m = 'card'), 0)::text as card_refunded,
+                  (coalesce(sum(taken) filter (where m = 'card'), 0) - coalesce(sum(refunded) filter (where m = 'card'), 0))::text as card_net
+           from x group by day order by day desc limit 14""",
+        (TZ, event["id"], TZ, event["id"]),
     )
+    for r in rows:
+        r["cash_sales"] = int(r["cash_sales"] or 0); r["card_sales"] = int(r["card_sales"] or 0)
     return jsonify(rows)
 
 
@@ -1727,6 +1747,20 @@ def analytics():
                    (select coalesce(sum(i.quantity), 0) from pos_transaction_items i where i.transaction_id = any(array_agg(t.id))) as units
             from pos_transactions t where {where}
             group by 1 order by 1""", [TZ] + params).fetchall()
+        by_payment = conn.execute(f"""
+            with x as (
+              select t.payment_method as m, 1 as n, t.amount_paid as taken, 0::numeric as refunded from pos_transactions t where {where}
+              union all
+              select t.refund_method, 0, 0, t.refund_amount from pos_transactions t where {where} and t.refund_amount is not null)
+            select m as method, sum(n) as sales, sum(taken) as taken, sum(refunded) as refunded, sum(taken) - sum(refunded) as net
+            from x where m in ('cash', 'card') group by m order by m desc""", params + params).fetchall()
+        by_day_method = conn.execute(f"""
+            select (t.sold_at at time zone %s)::date::text as day,
+                   coalesce(sum(t.amount_paid) filter (where t.payment_method = 'cash'), 0)
+                     - coalesce(sum(t.refund_amount) filter (where t.refund_method = 'cash'), 0) as cash_net,
+                   coalesce(sum(t.amount_paid) filter (where t.payment_method = 'card'), 0)
+                     - coalesce(sum(t.refund_amount) filter (where t.refund_method = 'card'), 0) as card_net
+            from pos_transactions t where {where} group by 1""", [TZ] + params).fetchall()
         by_hour = conn.execute(f"""
             select extract(hour from t.sold_at at time zone %s)::int as hour, count(*) as sales, sum(t.grand_total) as revenue
             from pos_transactions t where {where} group by 1 order by 1""", [TZ] + params).fetchall()
@@ -1779,7 +1813,8 @@ def analytics():
             "firstSale": kpi["first_sale"].isoformat() if kpi["first_sale"] else None,
             "lastSale": kpi["last_sale"].isoformat() if kpi["last_sale"] else None,
         },
-        "byDay": rows(by_day), "byHour": rows(by_hour), "byCategory": rows(by_category),
+        "byDay": [{**d, **next((m for m in rows(by_day_method) if m["day"] == d["day"]), {})} for d in rows(by_day)],
+        "byPayment": rows(by_payment), "byHour": rows(by_hour), "byCategory": rows(by_category),
         "topProducts": rows(top_products), "byStaff": rows(by_staff), "stock": rows(stock),
     })
 
@@ -1790,17 +1825,18 @@ def analytics_export():
     where, params = range_sql()
     rows = query(f"""
         select t.transaction_number, t.location_id as event_code, (t.sold_at at time zone %s) as sold_local, t.staff_name, t.status,
+               t.payment_method, t.refund_method,
                t.subtotal, t.discount_total, t.grand_total, t.cash_received, t.change_given, t.refund_amount, t.refund_reason,
                i.line_no, i.sku, i.product_name, i.category, i.quantity, i.unit_price, i.line_total, p.cost
         from pos_transactions t
         join pos_transaction_items i on i.transaction_id = t.id
         left join pos_products p on p.id = i.product_id
         where {where} order by t.sold_at, t.transaction_number, i.line_no""", [TZ] + params)
-    header = ["sale_number", "event", "sold_at_local", "staff", "status", "sale_subtotal", "sale_discount", "sale_total", "cash_received",
+    header = ["sale_number", "event", "sold_at_local", "staff", "status", "payment_method", "refund_method", "sale_subtotal", "sale_discount", "sale_total", "cash_received",
               "change_given", "refund_amount", "refund_reason", "line_no", "sku", "product", "category", "quantity", "unit_price",
               "line_total", "unit_cost"]
     body = [header] + [[r["transaction_number"], r["event_code"], r["sold_local"].strftime("%Y-%m-%d %H:%M:%S"), r["staff_name"], r["status"],
-                        r["subtotal"], r["discount_total"], r["grand_total"], r["cash_received"], r["change_given"],
+                        r["payment_method"], r["refund_method"] or "", r["subtotal"], r["discount_total"], r["grand_total"], r["cash_received"], r["change_given"],
                         r["refund_amount"] if r["refund_amount"] is not None else "", r["refund_reason"] or "",
                         r["line_no"], r["sku"], r["product_name"] or "", r["category"] or "", r["quantity"], r["unit_price"],
                         r["line_total"], r["cost"] if r["cost"] is not None else ""] for r in rows]

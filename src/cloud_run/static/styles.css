@@ -269,3 +269,18 @@ select.event-pill { appearance: none; -webkit-appearance: none; border: 0; paddi
 .stock-warn .warn-banner p { margin: 4px 0 0; font-weight: 600; }
 .stock-warn p { margin: 0; }
 .btn.danger { background: var(--danger); color: #fff; }
+
+/* Payment method: cash vs card, for reconciliation */
+.pay { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 3px 8px; border-radius: 999px; }
+.pay.pm-cash { background: #e7f4ea; color: var(--ok); }
+.pay.pm-card { background: #e8eefc; color: #2f54c8; }
+#orderMethod { display: flex; gap: 6px; }
+.summary-table th.grp { text-align: center; color: var(--ink); }
+.summary-table th.grp.pm-cash { background: #e7f4ea; }
+.summary-table th.grp.pm-card { background: #e8eefc; }
+.pay-split { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.pay-tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.pay-tile .l { font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+.pay-tile .v { font-size: 24px; font-weight: 800; margin-top: 6px; }
+.pay-tile .d { font-size: 13px; color: var(--muted); margin-top: 2px; }
+@media (max-width: 900px) { .pay-split { grid-template-columns: 1fr; } }
