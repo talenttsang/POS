@@ -69,6 +69,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
           </button>
         </div>
+        <button class="chip custom-btn" id="customBtn" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          Custom item
+        </button>
         <button class="icon-btn touch-only" id="kbBtn" type="button" title="On-screen keyboard" aria-label="On-screen keyboard">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg>
         </button>
@@ -211,6 +215,14 @@
   </div>
   <div class="err" id="lineDiscErr"></div>
   <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn ghost" id="lineDiscClear">No discount</button><button class="btn primary" id="lineDiscApply">Apply</button></div>
+</div>
+<div class="sheet" id="customSheet">
+  <h3>Custom item</h3>
+  <p class="muted">For something not in the catalogue. It is sold at the price you type and does not change SkuVault stock.</p>
+  <label class="field">Name <input id="customName" autocomplete="off" placeholder="Custom item" maxlength="80"></label>
+  <div class="row"><label class="field">Price <input id="customPrice" inputmode="decimal" autocomplete="off" placeholder="0.00" data-numpad="decimal"></label><label class="field">Quantity <input id="customQty" inputmode="numeric" autocomplete="off" value="1" data-numpad="pin"></label></div>
+  <div class="err" id="customErr"></div>
+  <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="customAdd">Add to sale</button></div>
 </div>
 <div class="sheet stock-warn" id="stockSheet" role="alertdialog" aria-labelledby="stockWarnTitle">
   <div class="warn-banner">

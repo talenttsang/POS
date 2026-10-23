@@ -1119,16 +1119,34 @@ def totals(lines, discount, tax_rate=0):
     return subtotal, discount, tax, money(subtotal - discount + tax)
 
 
+CUSTOM_SKU = "CUSTOM"
+CUSTOM_MAX_PRICE = Decimal("10000")
+
+
+def custom_product(item, n):
+    """A line the cashier typed in: their name and price, no catalogue product and
+    no SkuVault stock behind it."""
+    name = re.sub(r"\s+", " ", str(item.get("name") or "")).strip()[:80] or "Custom item"
+    try:
+        price = money(item.get("unitPrice"))
+    except (ValueError, ArithmeticError):
+        abort(400, f"bad price on custom line {n}")
+    if price <= 0 or price > CUSTOM_MAX_PRICE:
+        abort(400, f"custom price on line {n} must be above 0 and at most {CUSTOM_MAX_PRICE}")
+    return {"id": None, "sku": CUSTOM_SKU, "name": name, "category": "Custom", "price": price}
+
+
 def build_lines(items):
-    """Validate cart lines against the catalogue. Prices come from the database, never the browser."""
+    """Validate cart lines against the catalogue. Prices come from the database, never the
+    browser, except on custom lines, where the cashier sets the price on purpose."""
     if not items:
         abort(400, "no items")
-    ids = [str(i.get("productId")) for i in items]
+    ids = [str(i.get("productId")) for i in items if not i.get("custom")]
     rows = query(f"select {PRODUCT_COLS} from pos_products p where p.id::text = any(%s) and p.is_active and p.price is not null", (ids,))
     by_id = {str(r["id"]): r for r in rows}
     lines = []
     for n, item in enumerate(items, start=1):
-        product = by_id.get(str(item.get("productId")))
+        product = custom_product(item, n) if item.get("custom") else by_id.get(str(item.get("productId")))
         if not product:
             abort(400, f"unknown or inactive product on line {n}")
         qty = int(item.get("quantity") or 0)
@@ -1242,8 +1260,9 @@ def card_charge():
     if grand <= 0:
         abort(400, "nothing to charge")
     note = (str(body.get("note") or "").strip() or None)
-    cart = {"items": [{"productId": str(l["product"]["id"]), "quantity": l["quantity"], "barcode": l["barcode"],
-                       "discount": str(l.get("line_discount", 0))} for l in lines],
+    cart = {"items": [({"custom": True, "name": l["product"]["name"], "unitPrice": str(l["unit_price"])} if l["product"]["id"] is None
+                       else {"productId": str(l["product"]["id"])})
+                      | {"quantity": l["quantity"], "barcode": l["barcode"], "discount": str(l.get("line_discount", 0))} for l in lines],
             "discount": str(discount), "note": note, "taxExempt": tax_exempt}
     with pool().connection() as conn:
         row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
@@ -1404,6 +1423,8 @@ def queue_moves(conn, txn, event, direction, lines):
         return
     loc = event.get("sv_location") or AUTO_BIN
     for l in lines:
+        if l["sku"] == CUSTOM_SKU:      # typed in at the till: nothing to take out of SkuVault
+            continue
         conn.execute(
             """insert into pos_inventory_moves (transaction_id, line_no, sku, quantity, direction, warehouse, location)
                values (%s, %s, %s, %s, %s, %s, %s) on conflict (transaction_id, line_no, direction) do nothing""",

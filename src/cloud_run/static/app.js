@@ -383,6 +383,25 @@
   };
   $('stockAdd').addEventListener('click', () => { const go = stockGo; stockGo = null; closeSheets(); if (go) go(); });
 
+  // ---- custom item: a name and a price typed at the till, no catalogue product or stock
+  const openCustom = () => {
+    $('customName').value = ''; $('customPrice').value = ''; $('customQty').value = '1'; $('customErr').textContent = '';
+    openSheet('customSheet');
+    setTimeout(() => $('customPrice').focus({ preventScroll: true }), 50);
+  };
+  $('customBtn').addEventListener('click', openCustom);
+  $('customAdd').addEventListener('click', () => {
+    const price = Math.round(Number(String($('customPrice').value).replace(/[$,\s]/g, '')) * 100) / 100;
+    const qty = Math.floor(Number($('customQty').value || 1));
+    if (!(price > 0)) { $('customErr').textContent = 'Enter a price above $0.00'; return; }
+    if (price > 10000) { $('customErr').textContent = 'A custom item can be at most $10,000'; return; }
+    if (!(qty >= 1 && qty <= 999)) { $('customErr').textContent = 'Quantity is 1 to 999'; return; }
+    const name = $('customName').value.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Custom item';
+    state.cart.push({ product: { id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, custom: true, sku: 'CUSTOM', name, price: price.toFixed(2), category: 'Custom', stock: null }, qty, barcode: null });
+    closeSheets(); renderCart();
+  });
+  ['customName', 'customPrice', 'customQty'].forEach((id) => $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('customAdd').click(); } }));
+
   const addToCart = (product, barcode) => {
     const line = state.cart.find((l) => l.product.id === product.id);
     stockGuard(product, (line ? line.qty : 0) + 1, () => {
@@ -399,7 +418,7 @@
     const raw = l.disc.mode === 'percent' ? lineGross(l) * Math.min(l.disc.value, 100) / 100 : l.disc.value;
     return Math.min(cents(raw), lineGross(l));
   };
-  const lineItems = () => state.cart.map((l) => ({ productId: l.product.id, quantity: l.qty, barcode: l.barcode,
+  const lineItems = () => state.cart.map((l) => ({ ...(l.product.custom ? { custom: true, name: l.product.name, unitPrice: l.product.price } : { productId: l.product.id }), quantity: l.qty, barcode: l.barcode,
     ...(l.disc && l.disc.value > 0 ? (l.disc.mode === 'percent' ? { discountPercent: Math.min(l.disc.value, 100) } : { discount: lineDiscount(l) }) : {}) }));
 
   const cartTotals = () => {

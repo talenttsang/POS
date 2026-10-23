@@ -284,3 +284,9 @@ select.event-pill { appearance: none; -webkit-appearance: none; border: 0; paddi
 .pay-tile .v { font-size: 24px; font-weight: 800; margin-top: 6px; }
 .pay-tile .d { font-size: 13px; color: var(--muted); margin-top: 2px; }
 @media (max-width: 900px) { .pay-split { grid-template-columns: 1fr; } }
+
+/* Custom item */
+.custom-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: none; }
+#customSheet .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); flex: 1; }
+#customSheet input { height: 46px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; font-size: 16px; color: var(--ink); }
+#customSheet .muted { margin: 0; font-size: 13px; }
