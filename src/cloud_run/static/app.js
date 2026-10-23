@@ -220,7 +220,7 @@
 
   const renderGrid = () => {
     if (!state.products.length) { $('grid').innerHTML = `<div class="empty">${state.inStock ? 'Nothing in stock matches. Tap “In stock” to show everything.' : 'Nothing matches.'}</div>`; return; }
-    const canEdit = state.config && state.config.role === 'admin';
+    const canEdit = !!(state.config && state.config.unlocked);
     $('grid').innerHTML = state.products.map((p) => `
       <button class="card" data-id="${esc(p.id)}">
         ${canEdit ? '<span class="edit" role="button" aria-label="Edit product" data-edit><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>' : ''}
@@ -265,7 +265,7 @@
     addToCart(p);
   });
 
-  // ---- product edit (admins): barcode and description go to SkuVault
+  // ---- product edit (any signed-in user): barcode and description go to SkuVault
   let editing = null;
   const openEdit = async (p) => {
     editing = { id: p.id };
@@ -275,7 +275,7 @@
     openSheet('editSheet');
     $('editSvNote').textContent = 'Loading…';
     try {
-      const d = await api(`/api/admin/products/${encodeURIComponent(p.id)}/detail`);
+      const d = await api(`/api/products/${encodeURIComponent(p.id)}/detail`);
       if (!editing || editing.id !== p.id) return;
       editing.detail = d;
       $('editName').value = d.name; $('editPrice').value = d.price ?? ''; $('editCategory').value = d.category;
@@ -297,7 +297,7 @@
     try {
       const body = { name: $('editName').value, price: $('editPrice').value, category: $('editCategory').value, barcode: $('editBarcode').value.trim() };
       if (!$('editSvDesc').disabled) body.svDescription = $('editSvDesc').value;
-      const r = await api(`/api/admin/products/${encodeURIComponent(editing.id)}/edit`, { method: 'POST', body });
+      const r = await api(`/api/products/${encodeURIComponent(editing.id)}/edit`, { method: 'POST', body });
       closeSheets(); editing = null;
       toast(r.changed.length ? `Saved${r.skuvault ? ' · SkuVault updated' : ''}` : 'Nothing changed');
       await loadCatalogue();

@@ -1,6 +1,6 @@
 -- Product edits from the register: 0013
 --
--- Admins can edit a product from the register. The barcode and the SkuVault
+-- Any signed-in user can edit a product from the register. The barcode and the SkuVault
 -- description are written to SkuVault, the company's catalogue for every
 -- channel; name, price and category stay register-only. Each save is logged
 -- here with what it changed, by whom, so a barcode change can be traced.

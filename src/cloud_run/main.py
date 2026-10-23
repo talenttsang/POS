@@ -956,8 +956,8 @@ def sv_record(sku):
     return query("select sku, code, description, brand from public.products where lower(sku) = lower(%s) limit 1", (sku,), one=True)
 
 
-@app.get("/api/admin/products/<uuid:product_id>/detail")
-@require_admin
+@app.get("/api/products/<uuid:product_id>/detail")
+@require_unlock
 def admin_product_detail(product_id):
     """What the edit sheet shows: the register's fields and SkuVault's record."""
     p = query("select id, sku, name, category, price from pos_products where id = %s", (str(product_id),), one=True)
@@ -972,8 +972,8 @@ def admin_product_detail(product_id):
                                  "description": (sv or {}).get("description") or "", "brand": (sv or {}).get("brand") or ""}})
 
 
-@app.post("/api/admin/products/<uuid:product_id>/edit")
-@require_admin
+@app.post("/api/products/<uuid:product_id>/edit")
+@require_unlock
 def admin_product_edit(product_id):
     """Save the edit sheet. SkuVault first (barcode, description): if it refuses,
     nothing changes. Then, in one transaction, the register's fields, its scan
@@ -1054,7 +1054,7 @@ def admin_product_edit(product_id):
                              "where sku = %s", (sv_fields.get("Code"), sv_fields.get("Description"), sv["sku"]))
             conn.execute("insert into pos_product_edits (product_id, sku, changes, skuvault, edited_by) values (%s, %s, %s, %s, %s)",
                          (str(product_id), p["sku"], json.dumps(changes), json.dumps(sv_log) if sv_log else None,
-                          session.get("staff") or "admin"))
+                          session.get("staff") or "unknown"))
     return jsonify({"ok": True, "changed": list(changes), "skuvault": bool(sv_fields), "skuvaultFound": bool(sv)})
 
 
