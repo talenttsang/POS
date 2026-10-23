@@ -947,6 +947,117 @@ def venue_stock(event):
         return None
 
 
+BARCODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_.]{2,39}$")
+
+
+def sv_record(sku):
+    """The product as SkuVault has it, from the public.products mirror in Supabase
+    (kept in sync from SkuVault), or None if the SKU is not in SkuVault."""
+    return query("select sku, code, description, brand from public.products where lower(sku) = lower(%s) limit 1", (sku,), one=True)
+
+
+@app.get("/api/admin/products/<uuid:product_id>/detail")
+@require_admin
+def admin_product_detail(product_id):
+    """What the edit sheet shows: the register's fields and SkuVault's record."""
+    p = query("select id, sku, name, category, price from pos_products where id = %s", (str(product_id),), one=True)
+    if not p:
+        abort(404, "no such product")
+    codes = [r["barcode"] for r in query("select barcode from pos_product_barcodes where product_id = %s order by created_at",
+                                          (str(product_id),))]
+    sv = sv_record(p["sku"])
+    return jsonify({"id": str(p["id"]), "sku": p["sku"], "name": p["name"], "category": p["category"],
+                    "price": str(p["price"]) if p["price"] is not None else None, "barcodes": codes,
+                    "skuvault": {"found": bool(sv), "code": (sv or {}).get("code") or "",
+                                 "description": (sv or {}).get("description") or "", "brand": (sv or {}).get("brand") or ""}})
+
+
+@app.post("/api/admin/products/<uuid:product_id>/edit")
+@require_admin
+def admin_product_edit(product_id):
+    """Save the edit sheet. SkuVault first (barcode, description): if it refuses,
+    nothing changes. Then, in one transaction, the register's fields, its scan
+    codes and the public.products mirror, so the change shows before the next sync."""
+    body = request.get_json(silent=True) or {}
+    p = query("select id, sku, name, category, price from pos_products where id = %s", (str(product_id),), one=True)
+    if not p:
+        abort(404, "no such product")
+    changes, sv_fields = {}, {}
+
+    name = re.sub(r"\s+", " ", str(body.get("name", p["name"]) or "")).strip()[:200]
+    if not name:
+        abort(400, "the name cannot be empty")
+    if name != p["name"]:
+        changes["name"] = {"from": p["name"], "to": name}
+    category = re.sub(r"\s+", " ", str(body.get("category", p["category"]) or "")).strip()[:60] or p["category"]
+    if category != p["category"]:
+        changes["category"] = {"from": p["category"], "to": category}
+    price = p["price"]
+    if "price" in body:
+        try:
+            price = money(body["price"])
+        except Exception:
+            abort(400, "price must be a number")
+        if price < 0:
+            abort(400, "price cannot be negative")
+        if p["price"] is None or price != money(p["price"]):
+            changes["price"] = {"from": str(p["price"]) if p["price"] is not None else None, "to": str(price)}
+
+    sv = sv_record(p["sku"])
+    old_code = (sv or {}).get("code") or ""
+    barcode = str(body.get("barcode", old_code) or "").strip()
+    if barcode != old_code:
+        if not barcode:
+            abort(400, "a barcode cannot be blanked; type the new one")
+        if not BARCODE_RE.match(barcode):
+            abort(400, "a barcode is 3 to 40 letters or digits")
+        clash = query("select p.sku, p.name from pos_product_barcodes b join pos_products p on p.id = b.product_id "
+                      "where b.barcode = %s and b.product_id <> %s", (barcode, str(product_id)), one=True)
+        if clash:
+            abort(409, f"barcode {barcode} already belongs to {clash['name']} ({clash['sku']}) on the register")
+        owner = query("select sku from public.products where lower(code) = lower(%s) and lower(sku) <> lower(%s) limit 1",
+                      (barcode, p["sku"]), one=True)
+        if owner:
+            abort(409, f"barcode {barcode} already belongs to {owner['sku']} in SkuVault")
+        if sv:
+            sv_fields["Code"] = barcode
+        changes["barcode"] = {"from": old_code or None, "to": barcode}
+    if "svDescription" in body and sv:
+        desc = re.sub(r"\s+", " ", str(body.get("svDescription") or "")).strip()[:500]
+        if desc and desc != (sv.get("description") or ""):
+            sv_fields["Description"] = desc
+            changes["skuvault_description"] = {"from": sv.get("description"), "to": desc}
+    if not changes:
+        return jsonify({"ok": True, "changed": []})
+
+    sv_log = None
+    if sv_fields:
+        try:
+            sent, reply = SV.update_product(sv["sku"], sv_fields)
+            sv_log = {"sent": sent, "reply": reply}
+        except skuvault.SkuVaultError as exc:
+            abort(502, str(exc))
+    with pool().connection() as conn:
+        with conn.transaction():
+            conn.execute("update pos_products set name = %s, category = %s, price = %s where id = %s",
+                         (name, category, price, str(product_id)))
+            if "barcode" in changes:
+                # The old SkuVault barcode stops scanning to this product; other scan
+                # codes the register knows for it (case packs, ASINs) are kept.
+                if old_code:
+                    conn.execute("delete from pos_product_barcodes where barcode = %s and product_id = %s",
+                                 (old_code, str(product_id)))
+                conn.execute("insert into pos_product_barcodes (barcode, product_id) values (%s, %s) on conflict (barcode) do nothing",
+                             (barcode, str(product_id)))
+            if sv_fields:
+                conn.execute("update public.products set code = coalesce(%s, code), description = coalesce(%s, description) "
+                             "where sku = %s", (sv_fields.get("Code"), sv_fields.get("Description"), sv["sku"]))
+            conn.execute("insert into pos_product_edits (product_id, sku, changes, skuvault, edited_by) values (%s, %s, %s, %s, %s)",
+                         (str(product_id), p["sku"], json.dumps(changes), json.dumps(sv_log) if sv_log else None,
+                          session.get("staff") or "admin"))
+    return jsonify({"ok": True, "changed": list(changes), "skuvault": bool(sv_fields), "skuvaultFound": bool(sv)})
+
+
 @app.get("/api/categories")
 @require_unlock
 def categories():

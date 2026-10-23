@@ -220,8 +220,10 @@
 
   const renderGrid = () => {
     if (!state.products.length) { $('grid').innerHTML = `<div class="empty">${state.inStock ? 'Nothing in stock matches. Tap “In stock” to show everything.' : 'Nothing matches.'}</div>`; return; }
+    const canEdit = state.config && state.config.role === 'admin';
     $('grid').innerHTML = state.products.map((p) => `
       <button class="card" data-id="${esc(p.id)}">
+        ${canEdit ? '<span class="edit" role="button" aria-label="Edit product" data-edit><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>' : ''}
         ${thumb(p, 'photo')}
         <div class="name">${esc(p.name)}</div>
         <div class="meta"><span class="tag">${esc(p.category)}</span>${p.isSet ? '<span class="tag">set</span>' : ''}${p.isClearance ? '<span class="tag warn">clearance</span>' : ''}${stockTag(p.stock)}</div>
@@ -258,7 +260,49 @@
     const b = e.target.closest('[data-id]');
     if (!b) return;
     const p = state.products.find((x) => x.id === b.dataset.id);
-    if (p) addToCart(p);
+    if (!p) return;
+    if (e.target.closest('[data-edit]')) { openEdit(p); return; }
+    addToCart(p);
+  });
+
+  // ---- product edit (admins): barcode and description go to SkuVault
+  let editing = null;
+  const openEdit = async (p) => {
+    editing = { id: p.id };
+    $('editErr').textContent = ''; $('editCodes').textContent = '';
+    $('editSku').textContent = p.sku; $('editName').value = p.name; $('editPrice').value = p.price; $('editCategory').value = p.category;
+    $('editBarcode').value = ''; $('editSvDesc').value = ''; $('editSave').disabled = true;
+    openSheet('editSheet');
+    $('editSvNote').textContent = 'Loading…';
+    try {
+      const d = await api(`/api/admin/products/${encodeURIComponent(p.id)}/detail`);
+      if (!editing || editing.id !== p.id) return;
+      editing.detail = d;
+      $('editName').value = d.name; $('editPrice').value = d.price ?? ''; $('editCategory').value = d.category;
+      const sv = d.skuvault || {};
+      $('editBarcode').value = sv.code || ''; $('editSvDesc').value = sv.description || '';
+      $('editSvDesc').disabled = !sv.found;
+      $('editSvNote').textContent = sv.found ? `Brand ${sv.brand || '—'}. A barcode already used by another SKU is refused.`
+        : 'This SKU is not in SkuVault: the barcode is saved on the register only.';
+      const others = (d.barcodes || []).filter((c) => c !== sv.code);
+      $('editCodes').textContent = others.length ? `Other scan codes on the register: ${others.join(', ')}` : '';
+      $('editSave').disabled = false;
+      setTimeout(() => $('editBarcode').focus({ preventScroll: true }), 50);
+    } catch (err) { $('editSvNote').textContent = ''; $('editErr').textContent = err.message; }
+  };
+  $('editBarcode').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });   // a scanner ends with Enter
+  $('editSave').addEventListener('click', async () => {
+    if (!editing || !editing.detail) return;
+    const btn = $('editSave'); btn.disabled = true; btn.textContent = 'Saving…'; $('editErr').textContent = '';
+    try {
+      const body = { name: $('editName').value, price: $('editPrice').value, category: $('editCategory').value, barcode: $('editBarcode').value.trim() };
+      if (!$('editSvDesc').disabled) body.svDescription = $('editSvDesc').value;
+      const r = await api(`/api/admin/products/${encodeURIComponent(editing.id)}/edit`, { method: 'POST', body });
+      closeSheets(); editing = null;
+      toast(r.changed.length ? `Saved${r.skuvault ? ' · SkuVault updated' : ''}` : 'Nothing changed');
+      await loadCatalogue();
+    } catch (err) { $('editErr').textContent = err.message; }
+    finally { btn.disabled = false; btn.textContent = 'Save'; }
   });
 
   // Typing searches; a scanner sends the code followed by Enter, which we treat

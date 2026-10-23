@@ -178,6 +178,17 @@ class Client:
                 if not need:
                     break
 
+    # -- catalogue -----------------------------------------------------------
+    # Reads come from Supabase's public.products mirror; SkuVault is only written.
+    def update_product(self, sku, fields):
+        """Change only the given fields (Code, Description) on one SKU. SkuVault's
+        updateProduct leaves every field it is not sent as it was."""
+        body = {"Sku": sku, **fields}
+        r = self._post("products/updateProduct", body, retries=4)
+        if r.get("Errors") or str(r.get("Status", "OK")).upper() != "OK":
+            raise SkuVaultError(f"SkuVault refused the update: {json.dumps(r)[:300]}")
+        return body, r
+
     # -- moves --------------------------------------------------------------
     def move_items(self, direction, warehouse, items, reason):
         """Remove ('out') or add ('in') [{sku, quantity, location, note}] in one bulk
