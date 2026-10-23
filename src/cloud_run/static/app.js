@@ -179,10 +179,20 @@
 
   // ------------------------------------------------------------ catalogue
 
+  // "In stock" filter: remembered per device; only offered where the venue has a stock feed.
+  state.inStock = (() => { try { return localStorage.getItem('pos.inStock') === '1'; } catch { return false; } })();
   const loadCatalogue = async () => {
-    const cats = await api('/api/categories');
-    $('catChips').innerHTML = [{ category: 'all', n: cats.reduce((a, c) => a + c.n, 0) }, ...cats]
-      .map((c) => `<button class="chip${state.category === c.category ? ' on' : ''}" data-cat="${esc(c.category)}">${c.category === 'all' ? 'All' : esc(c.category)} <span style="opacity:.6">${c.n}</span></button>`)
+    const cats = await api(`/api/categories?${new URLSearchParams({ event: state.eventId || '' })}`);
+    const hasStock = cats.some((c) => c.in_stock != null);
+    if (!hasStock) state.inStock = false;
+    const count = (c) => (state.inStock ? c.in_stock : c.n);
+    const total = cats.reduce((a, c) => a + c.n, 0);
+    const inStockTotal = cats.reduce((a, c) => a + (c.in_stock || 0), 0);
+    const stockChip = hasStock
+      ? `<button class="chip stock-chip${state.inStock ? ' on' : ''}" id="inStockChip" aria-pressed="${state.inStock}">In stock <span style="opacity:.6">${inStockTotal}</span></button><span class="chip-sep" aria-hidden="true"></span>`
+      : '';
+    $('catChips').innerHTML = stockChip + [{ category: 'all', n: total, in_stock: inStockTotal }, ...cats]
+      .map((c) => `<button class="chip${state.category === c.category ? ' on' : ''}" data-cat="${esc(c.category)}">${c.category === 'all' ? 'All' : esc(c.category)} <span style="opacity:.6">${count(c)}</span></button>`)
       .join('');
     await searchProducts();
   };
@@ -201,13 +211,13 @@
   const searchProducts = async () => {
     renderSearchClear();
     const q = $('searchInput').value.trim();
-    const params = new URLSearchParams({ q, category: state.category, event: state.eventId || '' });
+    const params = new URLSearchParams({ q, category: state.category, event: state.eventId || '', inStock: state.inStock ? '1' : '0' });
     state.products = await api(`/api/products?${params}`);
     renderGrid();
   };
 
   const renderGrid = () => {
-    if (!state.products.length) { $('grid').innerHTML = '<div class="empty">Nothing matches.</div>'; return; }
+    if (!state.products.length) { $('grid').innerHTML = `<div class="empty">${state.inStock ? 'Nothing in stock matches. Tap “In stock” to show everything.' : 'Nothing matches.'}</div>`; return; }
     $('grid').innerHTML = state.products.map((p) => `
       <button class="card" data-id="${esc(p.id)}">
         ${thumb(p, 'photo')}
@@ -230,6 +240,12 @@
   };
 
   $('catChips').addEventListener('click', (e) => {
+    if (e.target.closest('#inStockChip')) {
+      state.inStock = !state.inStock;
+      try { localStorage.setItem('pos.inStock', state.inStock ? '1' : '0'); } catch { /* per-device nicety only */ }
+      loadCatalogue().catch((err) => toast(err.message));
+      return;
+    }
     const b = e.target.closest('[data-cat]');
     if (!b) return;
     state.category = b.dataset.cat;

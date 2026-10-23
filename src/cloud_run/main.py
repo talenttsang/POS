@@ -867,6 +867,13 @@ def products():
     category = request.args.get("category", "").strip()
     where = ["p.is_active", "p.price is not null"]
     params = []
+    stock = venue_stock(event_from_request(required=False))
+    if request.args.get("inStock") == "1" and stock is not None:
+        # Filtered in the query, not the browser: the list is capped, and most of
+        # the catalogue can be out of stock, so a client-side filter would hide
+        # in-stock items that never made the first page.
+        where.append("p.sku = any(%s)")
+        params.append([sku for sku, n in stock.items() if n > 0])
     if category and category != "all":
         where.append("p.category = %s")
         params.append(category)
@@ -880,7 +887,6 @@ def products():
         "case when p.category = 'Clearance' or p.is_clearance then p.price end, p.name limit 300",
         params,
     )
-    stock = venue_stock(event_from_request(required=False))
     return jsonify([serialise_product(r, stock) for r in rows])
 
 
@@ -900,7 +906,16 @@ def venue_stock(event):
 @app.get("/api/categories")
 @require_unlock
 def categories():
-    rows = query("select category, count(*) as n from pos_products where is_active and price is not null group by 1 order by (category = 'Clearance'), 1")
+    # Each category also carries how many of its products are in stock at this
+    # venue, for the register's "In stock" filter; null where the venue has no stock feed.
+    stock = venue_stock(event_from_request(required=False))
+    skus = [sku for sku, n in (stock or {}).items() if n > 0]
+    rows = query(
+        "select category, count(*) as n, count(*) filter (where sku = any(%s)) as in_stock from pos_products "
+        "where is_active and price is not null group by 1 order by (category = 'Clearance'), 1", (skus,))
+    if stock is None:
+        for r in rows:
+            r["in_stock"] = None
     return jsonify(rows)
 
 
