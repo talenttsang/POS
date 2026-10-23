@@ -877,17 +877,61 @@ def products():
     if category and category != "all":
         where.append("p.category = %s")
         params.append(category)
+    rank_sql, rank_params = "", []
     if q:
-        where.append("(p.name ilike %s or p.sku ilike %s or exists (select 1 from pos_product_barcodes b where b.product_id = p.id and b.barcode = %s))")
-        params += [f"%{q}%", f"%{q}%", q]
-    # Clearance goes last, in price order; everything else by category then name.
+        cond, cond_params, rank_sql, rank_params = fuzzy_search(q)
+        where.append(cond)
+        params += cond_params
+    # Best matches first when searching; then clearance last, in price order, and
+    # everything else by category then name.
     rows = query(
         f"select {PRODUCT_COLS} from pos_products p where {' and '.join(where)} "
-        "order by (p.category = 'Clearance' or p.is_clearance), p.category, "
+        f"order by {rank_sql}(p.category = 'Clearance' or p.is_clearance), p.category, "
         "case when p.category = 'Clearance' or p.is_clearance then p.price end, p.name limit 300",
-        params,
+        params + rank_params,
     )
     return jsonify([serialise_product(r, stock) for r in rows])
+
+
+# What a product is searched by: its name and SKU, lower-cased, with every run of
+# punctuation, underscores and spaces collapsed to one space ("SKIN1004_Madagascar
+# Mask_1pc" -> "skin1004 madagascar mask 1pc").
+SEARCH_HAY = "lower(regexp_replace(p.name || ' ' || p.sku, '[^[:alnum:]]+', ' ', 'g'))"
+FUZZY_MIN_LEN = 4        # shorter words must appear as typed; fuzzing them matches too much
+FUZZY_THRESHOLD = 0.5    # pg_trgm word_similarity; one typo in a 6-8 letter word still clears it
+
+
+def fuzzy_search(q):
+    """WHERE fragment and ORDER BY prefix for a forgiving search.
+
+    Every typed word must turn up somewhere in the name or SKU, in any order and
+    ignoring case and punctuation; a word of FUZZY_MIN_LEN letters or more also
+    matches a close misspelling: a letter dropped, added, wrong, or two swapped. A barcode typed or scanned exactly still finds
+    its product. Results rank literal matches above fuzzy ones, then by closeness.
+    """
+    words = [w for w in re.split(r"[^\w]+|_", q.lower()) if w][:8]
+    if not words:
+        return ("true", [], "", [])
+    per_word, params, score, score_params = [], [], [], []
+    for w in words:
+        if len(w) >= FUZZY_MIN_LEN:
+            # Trigrams catch a dropped, added or wrong letter; two neighbouring letters
+            # swapped ("snial") they barely see, so those spellings are tried outright.
+            swaps = [f"%{w[:i]}{w[i + 1]}{w[i]}{w[i + 2:]}%" for i in range(len(w) - 1) if w[i] != w[i + 1]]
+            per_word.append(f"({SEARCH_HAY} like %s or {SEARCH_HAY} like any(%s) "
+                            f"or extensions.word_similarity(%s, {SEARCH_HAY}) >= %s)")
+            params += [f"%{w}%", swaps, w, FUZZY_THRESHOLD]
+            score.append(f"(case when {SEARCH_HAY} like %s then 1 when {SEARCH_HAY} like any(%s) then 0.9 "
+                         f"else extensions.word_similarity(%s, {SEARCH_HAY}) end)")
+            score_params += [f"%{w}%", swaps, w]
+        else:
+            per_word.append(f"{SEARCH_HAY} like %s")
+            params.append(f"%{w}%")
+            score.append("1")
+    cond = ("((" + " and ".join(per_word) + ") or exists (select 1 from pos_product_barcodes b "
+            "where b.product_id = p.id and b.barcode = %s) or p.sku = %s)")
+    params += [q, q]
+    return cond, params, "(" + " + ".join(score) + ") desc, ", score_params
 
 
 def venue_stock(event):
