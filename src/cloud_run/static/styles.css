@@ -260,3 +260,12 @@ select.event-pill { appearance: none; -webkit-appearance: none; border: 0; paddi
 #editSheet .edit-head { font-weight: 700; font-size: 13px; }
 #editSheet label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); flex: 1; }
 #editSheet input { height: 42px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; font-size: 15px; color: var(--ink); }
+
+/* Out-of-stock warning */
+
+.stock-warn .warn-banner { display: flex; gap: 12px; align-items: flex-start; background: #fdecea; color: var(--danger); border-radius: 12px; padding: 14px; }
+.stock-warn .warn-banner svg { width: 28px; height: 28px; flex: none; }
+.stock-warn .warn-banner h3 { color: var(--danger); }
+.stock-warn .warn-banner p { margin: 4px 0 0; font-weight: 600; }
+.stock-warn p { margin: 0; }
+.btn.danger { background: var(--danger); color: #fff; }

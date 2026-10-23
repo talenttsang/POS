@@ -210,6 +210,15 @@
   <div class="err" id="lineDiscErr"></div>
   <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn ghost" id="lineDiscClear">No discount</button><button class="btn primary" id="lineDiscApply">Apply</button></div>
 </div>
+<div class="sheet stock-warn" id="stockSheet" role="alertdialog" aria-labelledby="stockWarnTitle">
+  <div class="warn-banner">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+    <div><h3 id="stockWarnTitle">Out of stock</h3><p id="stockWarnMsg"></p></div>
+  </div>
+  <p class="muted" id="stockWarnName"></p>
+  <p class="muted">Check the shelf before selling it.</p>
+  <div class="row"><button class="btn ghost" data-close>Don't add</button><button class="btn danger" id="stockAdd">Add anyway</button></div>
+</div>
 <div class="sheet" id="editSheet">
   <h3>Edit product</h3>
   <p class="muted" id="editSku"></p>

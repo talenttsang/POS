@@ -369,11 +369,27 @@
 
   // ------------------------------------------------------------ cart
 
+  // Out of stock: a red warning before the item goes in, with a way to add it anyway
+  // (the count in SkuVault can lag what is on the shelf).
+  let stockGo = null;
+  const stockGuard = (product, qty, go) => {
+    if (product.stock == null || qty <= product.stock) { go(); return; }
+    stockGo = go;
+    $('stockWarnName').textContent = product.name;
+    $('stockWarnTitle').textContent = product.stock <= 0 ? 'Out of stock' : 'Not enough stock';
+    $('stockWarnMsg').textContent = product.stock <= 0 ? 'SkuVault shows none left at this store.'
+      : `SkuVault shows only ${product.stock} left: this would make ${qty} in the sale.`;
+    openSheet('stockSheet');
+  };
+  $('stockAdd').addEventListener('click', () => { const go = stockGo; stockGo = null; closeSheets(); if (go) go(); });
+
   const addToCart = (product, barcode) => {
     const line = state.cart.find((l) => l.product.id === product.id);
-    if (line) line.qty += 1;
-    else state.cart.push({ product, qty: 1, barcode: barcode || null });
-    renderCart();
+    stockGuard(product, (line ? line.qty : 0) + 1, () => {
+      if (line) line.qty += 1;
+      else state.cart.push({ product, qty: 1, barcode: barcode || null });
+      renderCart();
+    });
   };
 
   // A line's discount: a dollar amount or a percentage of the line, never more than the line.
@@ -447,7 +463,9 @@
     if (e.target.closest('[data-discount]')) { openLineDiscount(line); return; }
     if (e.target.closest('[data-remove]')) state.cart = state.cart.filter((l) => l !== line);
     else if (e.target.closest('[data-step]')) {
-      line.qty += Number(e.target.closest('[data-step]').dataset.step);
+      const step = Number(e.target.closest('[data-step]').dataset.step);
+      if (step > 0) { stockGuard(line.product, line.qty + step, () => { line.qty += step; renderCart(); }); return; }
+      line.qty += step;
       if (line.qty <= 0) state.cart = state.cart.filter((l) => l !== line);
     }
     renderCart();
