@@ -757,11 +757,15 @@
 
   const renderSummary = (rows) => {
     if (!rows.length) { $('summaryTable').innerHTML = ''; return; }
-    $('summaryTable').innerHTML = `<tr><th rowspan="2">Day</th><th colspan="4" class="grp pm-cash">Cash · count against the drawer</th><th colspan="4" class="grp pm-card">Card · match to Clover</th></tr>
-      <tr><th>Sales</th><th>Taken</th><th>Refunded</th><th>Net</th><th>Sales</th><th>Taken</th><th>Refunded</th><th>Net</th></tr>`
-      + rows.map((r) => `<tr><td>${esc(r.day)}</td>
-        <td>${r.cash_sales}</td><td class="money">${money(r.cash_taken)}</td><td class="money">${money(r.cash_refunded)}</td><td class="money"><b>${money(r.cash_net)}</b></td>
-        <td>${r.card_sales}</td><td class="money">${money(r.card_taken)}</td><td class="money">${money(r.card_refunded)}</td><td class="money"><b>${money(r.card_net)}</b></td></tr>`).join('');
+    // Day total first, then how it splits: cash (count the drawer) and card (match Clover).
+    const cell = (net, n, refunded) => `<b class="money">${money(net)}</b><div class="sub">${n} sale${n === 1 ? '' : 's'}${Number(refunded) ? ` · ${money(refunded)} refunded` : ''}</div>`;
+    $('summaryTable').innerHTML = `<tr><th>Day</th><th class="tot">Total</th><th class="grp pm-cash">Cash · count the drawer</th><th class="grp pm-card">Card · match Clover</th></tr>`
+      + rows.map((r) => {
+        const net = num(r.cash_net) + num(r.card_net);
+        const refunded = num(r.cash_refunded) + num(r.card_refunded);
+        return `<tr><td>${esc(r.day)}</td><td class="tot">${cell(net, r.cash_sales + r.card_sales, refunded)}</td>
+          <td>${cell(r.cash_net, r.cash_sales, r.cash_refunded)}</td><td>${cell(r.card_net, r.card_sales, r.card_refunded)}</td></tr>`;
+      }).join('');
   };
 
   $('orderList').addEventListener('click', (e) => {

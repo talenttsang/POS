@@ -290,3 +290,7 @@ select.event-pill { appearance: none; -webkit-appearance: none; border: 0; paddi
 #customSheet .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); flex: 1; }
 #customSheet input { height: 46px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; font-size: 16px; color: var(--ink); }
 #customSheet .muted { margin: 0; font-size: 13px; }
+.summary-table td b.money { font-size: 16px; }
+.summary-table td .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.summary-table th.tot, .summary-table td.tot { background: #fbf3f2; }
+.summary-table td.tot b.money { font-size: 18px; }
