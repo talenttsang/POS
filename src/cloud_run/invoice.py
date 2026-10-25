@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
-COMPANY = os.environ.get("INVOICE_COMPANY", "Frontier Beauty Supplies Limited")
+COMPANY = os.environ.get("INVOICE_COMPANY", "Talent Production Limited")
 ADDRESS = os.environ.get("INVOICE_ADDRESS", "A1-201 4300 Steeles Ave E, Markham, ON L3R 0Y5")
 TZ = ZoneInfo("America/Toronto")
 FONTS = Path(__file__).parent / "fonts"
