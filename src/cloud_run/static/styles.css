@@ -70,15 +70,16 @@ input { font: inherit; color: inherit; }
 .cart-head h2 { margin: 0; font-size: 17px; }
 .cart-head .sub { color: var(--muted); font-size: 13px; flex: 1; }
 .cart-clear { color: var(--muted); font-size: 13px; font-weight: 600; }
-.lines { flex: 1; overflow: auto; padding: 0 10px; }
+.lines { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 10px; }
 .line { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 12px 8px; border-bottom: 1px solid var(--line); }
 .line-main { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+.line-main > div { min-width: 0; }
 .line .mini { width: 44px; height: 44px; flex: 0 0 44px; object-fit: contain; border-radius: 6px; border: 1px solid var(--line); background: #fff; font-size: 12px; }
 .line .n { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
 .line .s { color: var(--muted); font-size: 12px; }
 .line .amt { font-weight: 700; text-align: right; align-self: start; }
 .line .amt s { color: var(--muted); font-weight: 500; font-size: 12px; display: block; }
-.line .qty .disc { margin-left: auto; color: var(--accent-ink); font-weight: 600; font-size: 13px; }
+.line .qty .disc { width: auto; padding: 0 10px; white-space: nowrap; background: var(--chip); color: var(--accent-ink); font-weight: 600; font-size: 13px; }
 .line .qty .disc.on { background: var(--blush); border-radius: 8px; padding: 4px 8px; }
 #lineSheet .row .seg { flex: 0 0 auto; }
 #lineSheet input { flex: 1; height: 44px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; font-size: 16px; text-align: right; }
