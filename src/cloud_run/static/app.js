@@ -924,6 +924,7 @@
     barChart($('figCategory'), d.byCategory.map((x) => ({ label: x.category, value: num(x.revenue), tip: `${x.category}: ${money(num(x.revenue))} · ${x.units} units${x.cost_of_goods != null ? ` · margin ${pct((num(x.revenue_with_cost) - num(x.cost_of_goods)) / num(x.revenue_with_cost) * 100)}` : ''}` })));
     barChart($('figStaff'), d.byStaff.map((x) => ({ label: x.staff, value: num(x.revenue), tip: `${x.staff}: ${money(num(x.revenue))} · ${x.sales} sales · ${money(num(x.refunds))} refunded` })));
     stackChart($('figStock'), d.stock.filter((x) => num(x.brought) > 0).map((x) => ({ label: x.category, sold: num(x.sold), total: num(x.brought), tip: `${x.category}: ${x.sold} of ${x.brought} units sold (${pct(num(x.sold) / num(x.brought) * 100)}) · ${money0(x.remaining_value)} of stock left at price` })));
+    barChart($('figTopUnits'), (d.topUnits || []).slice(0, 12).map((x) => ({ label: x.name || x.sku, value: num(x.units), tip: `${x.name || x.sku}: ${x.units} units · ${money(num(x.revenue))}${num(x.gift_units) ? ` · ${x.gift_units} given as gifts` : ''}` })), { labelWidth: 330, fmt: (v) => `${v} unit${v === 1 ? '' : 's'}` });
     barChart($('figTop'), d.topProducts.slice(0, 12).map((x) => ({ label: x.name || x.sku, value: num(x.revenue), tip: `${x.name || x.sku}: ${money(num(x.revenue))} · ${x.units} units${x.margin != null ? ` · margin ${money(num(x.margin))}` : ''}${x.brought ? ` · ${x.units}/${x.brought} brought` : ''}` })), { labelWidth: 330 });
 
     const pay = Object.fromEntries((d.byPayment || []).map((x) => [x.method, x]));
@@ -978,7 +979,7 @@
         svg += `<rect class="hit" data-tip="${esc(it.tip)}" x="0" y="${padT + row * i}" width="${W}" height="${row}"/>`;
         svg += `<text class="cat" x="${lw}" y="${yy + 14}" text-anchor="end">${esc(truncate(it.label, lw / 6.2))}</text>`;
         svg += `<path class="bar" data-tip="${esc(it.tip)}" d="${roundRight(x0, yy, bw, 20)}"/>`;
-        svg += `<text class="val" x="${x0 + bw + 6}" y="${yy + 14}">${money0(it.value)}</text>`;
+        svg += `<text class="val" x="${x0 + bw + 6}" y="${yy + 14}">${(opts.fmt || money0)(it.value)}</text>`;
       });
       svg += `<line class="axis" x1="${x0}" x2="${x0}" y1="${padT}" y2="${H - 6}"/>`;
       plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${svg}</svg>`;

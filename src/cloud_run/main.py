@@ -1804,6 +1804,12 @@ def analytics():
             from pos_transaction_items i join pos_transactions t on t.id = i.transaction_id
             left join pos_products p on p.id = i.product_id
             where {where} group by i.sku order by revenue desc, units desc limit 15""", params).fetchall()
+        # The same products ranked by units handed over, gifts included (they leave the shelf too).
+        top_units = conn.execute(f"""
+            select i.sku, max(i.product_name) as name, max(i.category) as category, sum(i.quantity) as units,
+                   sum(i.line_total) as revenue, coalesce(sum(i.quantity) filter (where i.is_gift), 0) as gift_units
+            from pos_transaction_items i join pos_transactions t on t.id = i.transaction_id
+            where {where} and i.sku <> %s group by i.sku order by units desc, revenue desc limit 15""", params + [CUSTOM_SKU]).fetchall()
         by_staff = conn.execute(f"""
             select t.staff_name as staff, count(*) as sales, sum(t.grand_total) as revenue,
                    coalesce(sum(t.refund_amount), 0) as refunds, coalesce(sum(t.discount_total), 0) as discounts
@@ -1841,7 +1847,7 @@ def analytics():
         },
         "byDay": [{**d, **next((m for m in rows(by_day_method) if m["day"] == d["day"]), {})} for d in rows(by_day)],
         "byPayment": rows(by_payment), "byHour": rows(by_hour), "byCategory": rows(by_category),
-        "topProducts": rows(top_products), "byStaff": rows(by_staff), "stock": rows(stock),
+        "topProducts": rows(top_products), "topUnits": rows(top_units), "byStaff": rows(by_staff), "stock": rows(stock),
     })
 
 
