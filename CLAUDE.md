@@ -13,7 +13,7 @@
 ## Local Environment
 
 Manne runs commands locally on **Windows** (`cmd.exe`): keep commands on one
-line, use `python` not `python3`, prefer `gcloud`/`git` over shell builtins.
+line, use `python` not `python3`, prefer `git` over shell builtins.
 
 ## What this is
 
@@ -21,20 +21,16 @@ A cash register for trade-show booths. Read `README.md` first: it covers the
 register, users and the admin portal, events, the data model and migrations,
 product uploads, running locally and deploying.
 
-- Live service: Cloud Run `genc-pos` in `northamerica-northeast1` on GCP
-  project `genc-pos-2026`, running in **store mode** (`POS_MODE=store`: the
-  register sells at permanent stores, not events). Deploy with
-  `bash deploy.sh`; the session service account is an owner of that project.
-- Database: Supabase project `ngwlwntvoteuafeplobx`; schema in
-  `supabase/migrations/`, applied once each by `apply_migration.py` over the
-  Supabase Management API (secret `SUPABASE_ACCESS_TOKEN`) or a direct
-  connection (secret `SUPABASE_DB_URL`).
-- Credentials: Secret Manager, resolved by `lib/secrets.py`. The service reads
-  its secrets from its own project `genc-pos-2026`; scripts run from a session
-  default to `shp-ai-bot-2026`, where the same secrets also live. In cloud sessions use `/opt/gcp-venv/bin/python` for
-  anything that touches Secret Manager. The till master code is the
-  `POS_ACCESS_CODE` secret; never paste it into a chat.
-- Product photos come from the SkuVault-synced `products` table in the same
+- Live service runs in **store mode** (`POS_MODE=store`: the register sells at
+  permanent stores, not events).
+- Database: Supabase project `jykfgixmwqfxonccxhri` ("POS", organization
+  Talent Production); schema in `supabase/migrations/`, applied once each by
+  `apply_migration.py` over the Supabase Management API
+  (`SUPABASE_ACCESS_TOKEN`) or a direct connection (`SUPABASE_DB_URL`).
+- Credentials: environment variables or a gitignored `.env`, read by
+  `lib/secrets.py`. The till master code is `POS_ACCESS_CODE`; never paste it
+  into a chat.
+- Product photos come from a SkuVault-synced `products` table in the same
   Supabase database, matched on SKU.
 
 ## Verifying changes

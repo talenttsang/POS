@@ -28,11 +28,11 @@ Usage (one line, Windows cmd):
     python pos/import_products.py --deactivate-missing
                                                 also mark SKUs absent from the sheet inactive
 
-Connection: same rules as apply_migration.py (--via api|db|auto). Google
-access uses Application Default Credentials with a read-only Sheets scope:
-the service-account key on a cloud session or in CI, or `gcloud auth
-application-default login --scopes=...` on your own machine. Needs the
-google-auth package (installed with google-cloud-secret-manager).
+Connection: same rules as apply_migration.py (--via api|db|auto). The sheet
+is read with Google's default credentials and a read-only Sheets scope, e.g.
+GOOGLE_APPLICATION_CREDENTIALS pointing at a service-account key file that
+the sheet is shared with. Needs the google-auth package
+(pip install google-auth requests).
 """
 
 import argparse

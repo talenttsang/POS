@@ -4,13 +4,13 @@ Runs every file in pos/supabase/migrations/ in name order, skipping the ones
 already recorded in pos_schema_migrations. Each file runs in its own
 transaction, so a failing migration leaves the database as it was.
 
-Two ways in, both resolved through lib/secrets.py (an environment variable or
-gitignored .env first, then GCP Secret Manager on project shp-ai-bot-2026):
+Two ways in, both read through lib/secrets.py from an environment variable or
+the gitignored .env:
 
   api  The Supabase Management API over HTTPS, authenticated with the
-       SUPABASE_ACCESS_TOKEN secret (a personal access token). Works from
+       SUPABASE_ACCESS_TOKEN variable (a personal access token). Works from
        anywhere with HTTPS, including Claude cloud sessions. Preferred.
-  db   A direct Postgres connection with the SUPABASE_DB_URL secret, through
+  db   A direct Postgres connection with the SUPABASE_DB_URL variable, through
        the psycopg package or the psql command. Needs outbound port 5432 or
        6543, which cloud sessions do not have.
 
@@ -40,7 +40,7 @@ MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "supab
 
 # The Supabase project reference is the subdomain of the project's API URL. It
 # is an identifier, not a secret, and doubles as the default for the API path.
-SUPABASE_PROJECT_REF = os.environ.get("SUPABASE_PROJECT_REF", "ngwlwntvoteuafeplobx")
+SUPABASE_PROJECT_REF = os.environ.get("SUPABASE_PROJECT_REF", "jykfgixmwqfxonccxhri")
 SUPABASE_API = "https://api.supabase.com/v1"
 USER_AGENT = "trustpilot-ai-pipeline pos/apply_migration"
 BOOTSTRAP_SQL = (
