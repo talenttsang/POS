@@ -1153,10 +1153,14 @@ def build_lines(items):
         if qty <= 0 or qty > 999:
             abort(400, f"bad quantity on line {n}")
         gross = money(product["price"]) * qty
-        # A line discount is a dollar amount, or a percentage of the line, never more than the line.
+        gift = bool(item.get("gift"))
+        # A gift is the whole line off. Otherwise a line discount is a dollar amount,
+        # or a percentage of the line, never more than the line.
         pct = item.get("discountPercent")
         try:
-            if pct not in (None, ""):
+            if gift:
+                line_discount = gross
+            elif pct not in (None, ""):
                 pct = Decimal(str(pct))
                 if pct < 0 or pct > 100:
                     abort(400, f"discount percent out of range on line {n}")
@@ -1168,7 +1172,7 @@ def build_lines(items):
         if line_discount < 0 or line_discount > gross:
             abort(400, f"discount out of range on line {n}")
         lines.append({"line_no": n, "product": product, "quantity": qty, "unit_price": product["price"],
-                      "line_discount": line_discount, "barcode": (str(item.get("barcode") or "").strip() or None)})
+                      "line_discount": line_discount, "gift": gift, "barcode": (str(item.get("barcode") or "").strip() or None)})
     return lines
 
 
@@ -1208,10 +1212,10 @@ def insert_sale(conn, record_id, event, lines, discount, note, payment_method, c
         p = l["product"]
         conn.execute(
             """insert into pos_transaction_items (transaction_id, line_no, sku, product_name, category, quantity,
-                 unit_price, line_discount, product_id, barcode)
-               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                 unit_price, line_discount, product_id, barcode, is_gift)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (txn["id"], l["line_no"], p["sku"], p["name"], p["category"], l["quantity"], l["unit_price"],
-             l.get("line_discount", 0), p["id"], l["barcode"]),
+             l.get("line_discount", 0), p["id"], l["barcode"], l.get("gift", False)),
         )
     queue_moves(conn, txn, event, "out",
                 [{"line_no": l["line_no"], "sku": l["product"]["sku"], "quantity": l["quantity"]} for l in lines])
@@ -1262,7 +1266,8 @@ def card_charge():
     note = (str(body.get("note") or "").strip() or None)
     cart = {"items": [({"custom": True, "name": l["product"]["name"], "unitPrice": str(l["unit_price"])} if l["product"]["id"] is None
                        else {"productId": str(l["product"]["id"])})
-                      | {"quantity": l["quantity"], "barcode": l["barcode"], "discount": str(l.get("line_discount", 0))} for l in lines],
+                      | {"quantity": l["quantity"], "barcode": l["barcode"], "discount": str(l.get("line_discount", 0)), "gift": l.get("gift", False)}
+                      for l in lines],
             "discount": str(discount), "note": note, "taxExempt": tax_exempt}
     with pool().connection() as conn:
         row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
@@ -1549,7 +1554,7 @@ def admin_inventory_retry():
 
 def sale_payload(conn, txn):
     items = conn.execute(
-        "select line_no, sku, product_name, category, quantity, unit_price, line_discount, line_total from pos_transaction_items "
+        "select line_no, sku, product_name, category, quantity, unit_price, line_discount, line_total, is_gift from pos_transaction_items "
         "where transaction_id = %s order by line_no", (txn["id"],)
     ).fetchall()
     return serialise_sale(txn, items)
@@ -1569,7 +1574,7 @@ def serialise_sale(t, items):
         "refundedAt": t["refunded_at"].isoformat() if t["refunded_at"] else None,
         "note": t["note"], "soldAt": t["sold_at"].isoformat(),
         "items": [{"lineNo": i["line_no"], "sku": i["sku"], "name": i["product_name"], "category": i["category"],
-                   "quantity": i["quantity"], "unitPrice": s(i["unit_price"]), "lineDiscount": s(i.get("line_discount")),
+                   "quantity": i["quantity"], "unitPrice": s(i["unit_price"]), "lineDiscount": s(i.get("line_discount")), "gift": bool(i.get("is_gift")),
                    "lineTotal": s(i["line_total"])} for i in items],
     }
 
@@ -1594,7 +1599,7 @@ def list_sales():
         txns = conn.execute(f"select * from pos_transactions where {where} order by sold_at desc limit %s", params).fetchall()
         ids = [t["id"] for t in txns]
         items = conn.execute(
-            "select transaction_id, line_no, sku, product_name, category, quantity, unit_price, line_discount, line_total "
+            "select transaction_id, line_no, sku, product_name, category, quantity, unit_price, line_discount, line_total, is_gift "
             "from pos_transaction_items where transaction_id = any(%s) order by line_no", (ids,)
         ).fetchall() if ids else []
     grouped = {}
@@ -1667,7 +1672,7 @@ def invoice_pdf(number):
         if not t:
             abort(404, "no such sale")
         items = conn.execute(
-            "select line_no, sku, product_name, quantity, unit_price, line_discount, line_total from pos_transaction_items "
+            "select line_no, sku, product_name, quantity, unit_price, line_discount, line_total, is_gift from pos_transaction_items "
             "where transaction_id = %s order by line_no", (t["id"],)
         ).fetchall()
         venue = conn.execute("select name, address from pos_events where id = %s", (t["event_id"],)).fetchone() if t["event_id"] else None

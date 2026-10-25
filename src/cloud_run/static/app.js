@@ -414,12 +414,13 @@
   // A line's discount: a dollar amount or a percentage of the line, never more than the line.
   const lineGross = (l) => cents(Number(l.product.price) * l.qty);
   const lineDiscount = (l) => {
+    if (l.gift) return lineGross(l);                 // a gift is the whole line off: $0
     if (!l.disc || !(l.disc.value > 0)) return 0;
     const raw = l.disc.mode === 'percent' ? lineGross(l) * Math.min(l.disc.value, 100) / 100 : l.disc.value;
     return Math.min(cents(raw), lineGross(l));
   };
   const lineItems = () => state.cart.map((l) => ({ ...(l.product.custom ? { custom: true, name: l.product.name, unitPrice: l.product.price } : { productId: l.product.id }), quantity: l.qty, barcode: l.barcode,
-    ...(l.disc && l.disc.value > 0 ? (l.disc.mode === 'percent' ? { discountPercent: Math.min(l.disc.value, 100) } : { discount: lineDiscount(l) }) : {}) }));
+    ...(l.gift ? { gift: true } : l.disc && l.disc.value > 0 ? (l.disc.mode === 'percent' ? { discountPercent: Math.min(l.disc.value, 100) } : { discount: lineDiscount(l) }) : {}) }));
 
   const cartTotals = () => {
     const subtotal = cents(state.cart.reduce((a, l) => a + lineGross(l) - lineDiscount(l), 0));
@@ -461,7 +462,8 @@
         <div class="qty">
           <button data-step="-1" aria-label="Less">−</button><span>${l.qty}</span><button data-step="1" aria-label="More">+</button>
           <button class="rm" data-remove>Remove</button>
-          <button class="disc${lineDiscount(l) ? ' on' : ''}" data-discount>${lineDiscount(l) ? (l.disc.mode === 'percent' ? `−${l.disc.value}%` : `−${money(lineDiscount(l))}`) : 'Discount'}</button>
+          <button class="gift${l.gift ? ' on' : ''}" data-gift aria-pressed="${!!l.gift}">${l.gift ? '✓ Gift' : 'Gift'}</button>
+          ${l.gift ? '' : `<button class="disc${lineDiscount(l) ? ' on' : ''}" data-discount>${lineDiscount(l) ? (l.disc.mode === 'percent' ? `−${l.disc.value}%` : `−${money(lineDiscount(l))}`) : 'Discount'}</button>`}
         </div>
       </div>`).join('') : '<div class="empty">Tap a product or scan a barcode.</div>';
     const t = cartTotals();
@@ -480,6 +482,7 @@
     const line = state.cart.find((l) => l.product.id === lineEl.dataset.id);
     if (!line) return;
     if (e.target.closest('[data-discount]')) { openLineDiscount(line); return; }
+    if (e.target.closest('[data-gift]')) { line.gift = !line.gift; renderCart(); return; }
     if (e.target.closest('[data-remove]')) state.cart = state.cart.filter((l) => l !== line);
     else if (e.target.closest('[data-step]')) {
       const step = Number(e.target.closest('[data-step]').dataset.step);
@@ -787,7 +790,7 @@
       <h3>Sale #${o.number}</h3>
       <div class="muted">${new Date(o.soldAt).toLocaleString('en-CA')} · ${esc(o.staff)} · ${label}</div>
       <div>${payTag(o)}</div>
-      <div>${o.items.map((i) => `<div class="ps-line"><span>${i.quantity}× ${esc(i.name)}${Number(i.lineDiscount) ? ` <span class="muted">(−${money(i.lineDiscount)})</span>` : ''}</span><span class="money">${money(i.lineTotal)}</span></div>`).join('')}</div>
+      <div>${o.items.map((i) => `<div class="ps-line"><span>${i.quantity}× ${esc(i.name)}${i.gift ? ' <span class="pay gift-tag">Gift</span>' : Number(i.lineDiscount) ? ` <span class="muted">(−${money(i.lineDiscount)})</span>` : ''}</span><span class="money">${money(i.lineTotal)}</span></div>`).join('')}</div>
       <div class="totals" style="padding:0">
         <div class="trow"><span>Subtotal</span><span class="money">${money(o.subtotal)}</span></div>
         ${Number(o.discount) ? `<div class="trow"><span>Discount</span><span class="money">−${money(o.discount)}</span></div>` : ''}

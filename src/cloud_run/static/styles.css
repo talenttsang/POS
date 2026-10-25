@@ -295,3 +295,9 @@ select.event-pill { appearance: none; -webkit-appearance: none; border: 0; paddi
 .summary-table td .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .summary-table th.tot, .summary-table td.tot { background: #fbf3f2; }
 .summary-table td.tot b.money { font-size: 18px; }
+
+/* Gift lines */
+.line .qty .gift { width: auto; padding: 0 10px; white-space: nowrap; background: var(--chip); color: var(--accent-ink); font-weight: 600; font-size: 13px; }
+.line .qty .gift.on { background: #fdf0d5; color: #8a5a00; }
+.pay.gift-tag { background: #fdf0d5; color: #8a5a00; }
+.line .qty .gift, .line .qty .disc { margin-left: 6px; }

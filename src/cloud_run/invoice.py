@@ -149,7 +149,9 @@ def build_invoice_pdf(sale, items, venue, bill_to=None):
     pdf.ln(4)
     for it in items:
         name = it["product_name"] or ""
-        if float(it.get("line_discount") or 0) > 0:
+        if it.get("is_gift"):
+            name += "\nGift (no charge)"
+        elif float(it.get("line_discount") or 0) > 0:
             name += f"\nLess discount {money(it['line_discount'], cur)}"
         pdf.row(list(zip(widths, [str(it["quantity"]), it["sku"] or "", name,
                                   money(it["unit_price"], cur), money(it["line_total"], cur)])), align=aligns)
