@@ -100,7 +100,7 @@ The register runs on Render's free plan from `render.yaml`:
    Transaction pooler, port 6543, with the database password filled in; the
    direct connection is IPv6-only and Render cannot reach it),
    `POS_ACCESS_CODE`, and `CLOVER_PROXY_SECRET` if the store takes cards.
-3. Apply the migrations to the Supabase project (below), then open
+3. Set up the Supabase project's tables (below), then open
    `https://<service>.onrender.com/api/health`: it reads `"db": "ok"`.
 
 A free service sleeps after 15 minutes without traffic and takes 30-60
@@ -186,6 +186,17 @@ Rules the database enforces, so no register build can disagree:
 Row Level Security is on with no policies, so only server-side code holding
 the service key can read or write. Add policies once the register's auth is
 decided.
+
+## Setting up a new Supabase project
+
+No local checkout needed: open `supabase/setup.sql` on GitHub (Raw), copy all
+of it into Supabase > SQL Editor, and Run, once. It creates every table and
+records each migration as applied. Regenerate it with
+`python apply_migration.py --write-setup` whenever a migration is added.
+
+A later migration on its own: paste that one file into the SQL Editor, then
+run `insert into pos_schema_migrations (name) values ('<file name>');` so
+`apply_migration.py` knows it is done.
 
 ## Applying a migration
 
