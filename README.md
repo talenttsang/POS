@@ -1,6 +1,6 @@
 # Pikumi POS
 
-A cash register for trade-show booths: Flask on Cloud Run, Supabase (Postgres)
+A cash register for trade-show booths: Flask on Render's free plan, Supabase (Postgres)
 behind it, an admin portal for users, events and product uploads, and an
 analytics tab for the CFO. It started life in the `pos/` folder of
 `mannetsang/trustpilot-ai-pipeline` and was extracted here with its history.
@@ -22,7 +22,7 @@ keyboard: the search box treats a code followed by Enter as a scan.
 ### Venues: stores or events
 
 A deployment runs in one of two modes, set by the `POS_MODE` environment
-variable in `deploy.sh`:
+variable (`render.yaml`):
 
 - **store** (this deployment): venues are permanent stores with a name,
   address and currency.
@@ -44,11 +44,10 @@ sales. Admins can also open `/admin` to add users, reset PINs, change roles
 and deactivate people, and they approve refunds on the register by entering
 their name and PIN.
 
-The master code (secret `POS_ACCESS_CODE`) opens the admin portal on its own.
+The master code (environment variable `POS_ACCESS_CODE`) opens the admin portal on its own.
 That is how the first admin gets created, and the recovery path if every admin
 forgets their PIN. Keep it with whoever owns the project, not with booth staff.
-The service reads it live and re-reads every minute, so creating or rotating
-it needs no redeploy.
+Changing it in the Render dashboard restarts the service with the new code.
 
 Five wrong PINs in a row lock a name for one minute.
 
@@ -68,15 +67,9 @@ deployment with the `INVOICE_COMPANY` and `INVOICE_ADDRESS` environment
 variables. An optional customer name typed next to the Invoice button goes in
 the billing block; otherwise it reads "Walk-in customer".
 
-Configuration is by environment variable (see the docstring in `main.py`).
-Two values come from Secret Manager: `SUPABASE_DB_URL`, mounted at deploy
-time, and `POS_ACCESS_CODE`, the master code described above.
-
-Create the master code once (one line, Windows cmd; pick your own digits):
-
-```
-echo|set /p="123456"|gcloud secrets create POS_ACCESS_CODE --replication-policy=automatic --project=shp-ai-bot-2026 --data-file=-
-```
+Configuration is by environment variable (see the docstring in `main.py`):
+`SUPABASE_DB_URL` and `POS_ACCESS_CODE` are required, the rest optional.
+They are set in the Render dashboard, never committed.
 
 ### Running it locally
 
@@ -99,44 +92,32 @@ products not in this file" box deactivates whatever the file no longer lists.
 
 ### Deploying
 
-`deploy.sh` deploys the service `genc-pos` to Cloud Run in
-`northamerica-northeast1` (Montreal) on GCP project `genc-pos-2026` from
-source, and prints its URL. The project holds its own copies of the
-`SUPABASE_DB_URL` and `POS_ACCESS_CODE` secrets. It runs
-from a Claude cloud session, a workstation, or the `deploy.yml` workflow
-once the `GCP_SA_KEY` repository secret is set.
+The register runs on Render's free plan from `render.yaml`:
 
-The deploying identity needs these roles on `shp-ai-bot-2026`: Cloud Run
-Admin, Cloud Build Editor, Artifact Registry Administrator, Storage Admin,
-Service Usage Admin, and Service Account User on the Compute Engine default
-service account that the service runs as. That runtime account also needs
-Secret Manager Secret Accessor for the two secrets above.
+1. In Render, New > Blueprint, and pick this repository. It builds
+   `src/cloud_run/Dockerfile` and redeploys on every push to `main`.
+2. Fill in the secrets it asks for: `SUPABASE_DB_URL` (Supabase > Connect >
+   Transaction pooler, port 6543, with the database password filled in; the
+   direct connection is IPv6-only and Render cannot reach it),
+   `POS_ACCESS_CODE`, and `CLOVER_PROXY_SECRET` if the store takes cards.
+3. Apply the migrations to the Supabase project (below), then open
+   `https://<service>.onrender.com/api/health`: it reads `"db": "ok"`.
 
-## Inventory sync with SkuVault
+A free service sleeps after 15 minutes without traffic and takes 30-60
+seconds to wake, so open the register a minute before trading. A free
+Supabase project pauses after a week without activity; an uptime monitor
+calling `/api/health` every few minutes keeps both awake, since that route
+queries the database.
 
-A store names the SkuVault warehouse that holds its stock (admin portal,
-store form; the Markham store is warehouse `PKP`, "PIKUMI Pacific Mall"). An
-optional bin narrows it to one location. When a warehouse is set:
+The session cookie is HTTPS-only. For a plain-http test box on the LAN, set
+`COOKIE_SECURE=0`; http://localhost works without it.
 
-- product cards show the on-hand quantity at that location ("3 in stock",
-  "out of stock") and a cart line warns when it exceeds stock; selling is
-  not blocked;
-- each sale takes the sold units from the bins that hold them, fullest first,
-  splitting across bins when one is short, with reason `Sold`; a full refund
-  puts them back in the same bins with reason `Return (Bricks & Mortar)`.
-  Bins read as `PKP[1L1]` and are written as `1L1`. A sale larger than the
-  warehouse holds leaves its move failed until stock is received
-  (both must exist under SkuVault Admin > Reasons; override with
-  `SKUVAULT_REASON_OUT` / `SKUVAULT_REASON_IN`);
-- every move is a row in `pos_inventory_moves`, sent by a background worker
-  after the sale commits, so SkuVault being down never blocks a sale. Failed
-  moves are retried on the next sale or from the admin portal's Inventory
-  sync panel.
+## Product photos
 
-Credentials are the `SKUVAULT_EMAIL` and `SKUVAULT_PASSWORD` secrets in the
-service's project. SkuVault allows about five calls a minute per endpoint, so
-stock is cached for three minutes per location and served stale when
-throttled. `src/cloud_run/skuvault.py` is the whole client.
+Each product's photo is a link in `pos_products.image_url`: the `image_url`
+column of the product upload, or the Photo link field of the register's edit
+sheet (pencil on a product card). Only http(s) links are accepted; a product
+without one, or whose link fails to load, shows its initials.
 
 ## Card payments on a Clover Flex
 
@@ -165,13 +146,9 @@ the whole client.
 
 ## Custom domain
 
-`domain.sh` puts `pos.gencbeauty.com` in front of the service with a global
-HTTPS load balancer and a Google-managed certificate, and prints the one DNS
-record (an A record for `pos`) the domain owner has to add. It is idempotent.
-Check the certificate with
-`gcloud compute ssl-certificates describe genc-pos-cert --global --project=genc-pos-2026`;
-it reads ACTIVE once the record resolves. The run.app URL keeps working
-alongside the domain.
+Add the domain under the service's Settings > Custom Domains in Render and
+create the DNS record it shows; Render issues the certificate. Custom domains
+work on the free plan.
 
 ## Data
 
@@ -182,7 +159,7 @@ are applied once each, in name order, by `apply_migration.py`.
 |---|---|
 | `pos_transactions` | One row per sale: where, who rang it, currency, totals, cash received and change, refund details. |
 | `pos_transaction_items` | One row per line sold: SKU, name, quantity, unit price, line total, and the product and barcode it came from. |
-| `pos_products` | The product list, one row per SKU: name, category, price, cost, quantity brought to the show, flags, and the raw sheet row. |
+| `pos_products` | The product list, one row per SKU: name, category, price, cost, quantity brought to the show, flags, photo link, and the raw sheet row. |
 | `pos_product_barcodes` | Scannable codes (UPC, EAN, ASIN) pointing at a product. Several codes may point at one product. |
 | `pos_daily_cash_summary` | View. Per till, per Toronto calendar day, per currency: sales, cash in, change out, cash refunds, net drawer. |
 | `pos_events` | Shows and selling periods: code, name, dates, currency, active flag. Sales carry `event_id`. |

@@ -219,35 +219,21 @@
 </div>
 <div class="sheet" id="customSheet">
   <h3>Custom item</h3>
-  <p class="muted">For something not in the catalogue. It is sold at the price you type and does not change SkuVault stock.</p>
+  <p class="muted">For something not in the catalogue. It is sold at the price you type.</p>
   <label class="field">Name <input id="customName" autocomplete="off" placeholder="Custom item" maxlength="80"></label>
   <div class="row"><label class="field">Price <input id="customPrice" inputmode="decimal" autocomplete="off" placeholder="0.00" data-numpad="decimal"></label><label class="field">Quantity <input id="customQty" inputmode="numeric" autocomplete="off" value="1" data-numpad="pin"></label></div>
   <div class="err" id="customErr"></div>
   <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="customAdd">Add to sale</button></div>
 </div>
-<div class="sheet stock-warn" id="stockSheet" role="alertdialog" aria-labelledby="stockWarnTitle">
-  <div class="warn-banner">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-    <div><h3 id="stockWarnTitle">Out of stock</h3><p id="stockWarnMsg"></p></div>
-  </div>
-  <p class="muted" id="stockWarnName"></p>
-  <p class="muted">Check the shelf before selling it.</p>
-  <div class="row"><button class="btn ghost" data-close>Don't add</button><button class="btn danger" id="stockAdd">Add anyway</button></div>
-</div>
 <div class="sheet" id="editSheet">
   <h3>Edit product</h3>
   <p class="muted" id="editSku"></p>
   <div class="edit-group">
-    <div class="edit-head">Saved to SkuVault <span class="muted">· every channel</span></div>
-    <label>Barcode <input id="editBarcode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan or type"></label>
-    <label>SkuVault description <input id="editSvDesc" autocomplete="off"></label>
-    <div class="muted" id="editSvNote"></div>
-  </div>
-  <div class="edit-group">
-    <div class="edit-head">Register only</div>
     <label>Name on register <input id="editName" autocomplete="off"></label>
     <div class="row"><label>Price <input id="editPrice" inputmode="decimal" autocomplete="off" data-numpad="decimal"></label><label>Category <input id="editCategory" autocomplete="off"></label></div>
-    <div class="muted" id="editCodes"></div>
+    <label>Barcodes <input id="editBarcodes" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Scan or type; separate several with spaces"></label>
+    <label>Photo link <input id="editImage" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…"></label>
+    <div class="muted">A barcode already on another product is refused.</div>
   </div>
   <div class="err" id="editErr"></div>
   <div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="editSave">Save</button></div>

@@ -179,22 +179,11 @@
 
   // ------------------------------------------------------------ catalogue
 
-  // "In stock" filter: on every time the register opens; a tap shows everything for
-  // the moment. Only offered where the venue has a stock feed.
-  state.inStock = true;
-  try { localStorage.removeItem('pos.inStock'); } catch { /* older builds remembered it per device */ }
   const loadCatalogue = async () => {
     const cats = await api(`/api/categories?${new URLSearchParams({ event: state.eventId || '' })}`);
-    const hasStock = cats.some((c) => c.in_stock != null);
-    if (!hasStock) state.inStock = false;
-    const count = (c) => (state.inStock ? c.in_stock : c.n);
     const total = cats.reduce((a, c) => a + c.n, 0);
-    const inStockTotal = cats.reduce((a, c) => a + (c.in_stock || 0), 0);
-    const stockChip = hasStock
-      ? `<button class="chip stock-chip${state.inStock ? ' on' : ''}" id="inStockChip" aria-pressed="${state.inStock}">In stock <span style="opacity:.6">${inStockTotal}</span></button><span class="chip-sep" aria-hidden="true"></span>`
-      : '';
-    $('catChips').innerHTML = stockChip + [{ category: 'all', n: total, in_stock: inStockTotal }, ...cats]
-      .map((c) => `<button class="chip${state.category === c.category ? ' on' : ''}" data-cat="${esc(c.category)}">${c.category === 'all' ? 'All' : esc(c.category)} <span style="opacity:.6">${count(c)}</span></button>`)
+    $('catChips').innerHTML = [{ category: 'all', n: total }, ...cats]
+      .map((c) => `<button class="chip${state.category === c.category ? ' on' : ''}" data-cat="${esc(c.category)}">${c.category === 'all' ? 'All' : esc(c.category)} <span style="opacity:.6">${c.n}</span></button>`)
       .join('');
     await searchProducts();
   };
@@ -213,26 +202,23 @@
   const searchProducts = async () => {
     renderSearchClear();
     const q = $('searchInput').value.trim();
-    const params = new URLSearchParams({ q, category: state.category, event: state.eventId || '', inStock: state.inStock ? '1' : '0' });
+    const params = new URLSearchParams({ q, category: state.category, event: state.eventId || '' });
     state.products = await api(`/api/products?${params}`);
     renderGrid();
   };
 
   const renderGrid = () => {
-    if (!state.products.length) { $('grid').innerHTML = `<div class="empty">${state.inStock ? 'Nothing in stock matches. Tap “In stock” to show everything.' : 'Nothing matches.'}</div>`; return; }
+    if (!state.products.length) { $('grid').innerHTML = `<div class="empty">Nothing matches.</div>`; return; }
     const canEdit = !!(state.config && state.config.unlocked);
     $('grid').innerHTML = state.products.map((p) => `
       <button class="card" data-id="${esc(p.id)}">
         ${canEdit ? '<span class="edit" role="button" aria-label="Edit product" data-edit><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>' : ''}
         ${thumb(p, 'photo')}
         <div class="name">${esc(p.name)}</div>
-        <div class="meta"><span class="tag">${esc(p.category)}</span>${p.isSet ? '<span class="tag">set</span>' : ''}${p.isClearance ? '<span class="tag warn">clearance</span>' : ''}${stockTag(p.stock)}</div>
+        <div class="meta"><span class="tag">${esc(p.category)}</span>${p.isSet ? '<span class="tag">set</span>' : ''}${p.isClearance ? '<span class="tag warn">clearance</span>' : ''}</div>
         <div class="price money">${money(p.price)}</div>
       </button>`).join('');
   };
-
-  // On-hand quantity at this store's SkuVault location; null when the store has none.
-  const stockTag = (n) => (n == null ? '' : n <= 0 ? '<span class="tag out">out of stock</span>' : `<span class="tag stock">${n} in stock</span>`);
 
   // Product photo, or a neutral placeholder with the first letters of the name.
   // A photo that fails to load falls back to the placeholder (onerror).
@@ -244,11 +230,6 @@
   };
 
   $('catChips').addEventListener('click', (e) => {
-    if (e.target.closest('#inStockChip')) {
-      state.inStock = !state.inStock;
-      loadCatalogue().catch((err) => toast(err.message));
-      return;
-    }
     const b = e.target.closest('[data-cat]');
     if (!b) return;
     state.category = b.dataset.cat;
@@ -265,41 +246,38 @@
     addToCart(p);
   });
 
-  // ---- product edit (any signed-in user): barcode and description go to SkuVault
+  // ---- product edit (any signed-in user)
   let editing = null;
   const openEdit = async (p) => {
     editing = { id: p.id };
-    $('editErr').textContent = ''; $('editCodes').textContent = '';
+    $('editErr').textContent = '';
     $('editSku').textContent = p.sku; $('editName').value = p.name; $('editPrice').value = p.price; $('editCategory').value = p.category;
-    $('editBarcode').value = ''; $('editSvDesc').value = ''; $('editSave').disabled = true;
+    $('editBarcodes').value = ''; $('editImage').value = p.image || ''; $('editSave').disabled = true;
     openSheet('editSheet');
-    $('editSvNote').textContent = 'Loading…';
     try {
       const d = await api(`/api/products/${encodeURIComponent(p.id)}/detail`);
       if (!editing || editing.id !== p.id) return;
       editing.detail = d;
       $('editName').value = d.name; $('editPrice').value = d.price ?? ''; $('editCategory').value = d.category;
-      const sv = d.skuvault || {};
-      $('editBarcode').value = sv.code || ''; $('editSvDesc').value = sv.description || '';
-      $('editSvDesc').disabled = !sv.found;
-      $('editSvNote').textContent = sv.found ? `Brand ${sv.brand || '—'}. A barcode already used by another SKU is refused.`
-        : 'This SKU is not in SkuVault: the barcode is saved on the register only.';
-      const others = (d.barcodes || []).filter((c) => c !== sv.code);
-      $('editCodes').textContent = others.length ? `Other scan codes on the register: ${others.join(', ')}` : '';
+      $('editBarcodes').value = (d.barcodes || []).join(' '); $('editImage').value = d.image || '';
       $('editSave').disabled = false;
-      setTimeout(() => $('editBarcode').focus({ preventScroll: true }), 50);
-    } catch (err) { $('editSvNote').textContent = ''; $('editErr').textContent = err.message; }
+    } catch (err) { $('editErr').textContent = err.message; }
   };
-  $('editBarcode').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });   // a scanner ends with Enter
+  // A scanner ends with Enter: start the next code instead of submitting.
+  $('editBarcodes').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const el = $('editBarcodes'); if (el.value && !/\s$/.test(el.value)) el.value += ' ';
+  });
   $('editSave').addEventListener('click', async () => {
     if (!editing || !editing.detail) return;
     const btn = $('editSave'); btn.disabled = true; btn.textContent = 'Saving…'; $('editErr').textContent = '';
     try {
-      const body = { name: $('editName').value, price: $('editPrice').value, category: $('editCategory').value, barcode: $('editBarcode').value.trim() };
-      if (!$('editSvDesc').disabled) body.svDescription = $('editSvDesc').value;
+      const body = { name: $('editName').value, price: $('editPrice').value, category: $('editCategory').value,
+        barcodes: $('editBarcodes').value.split(/[\s,|;]+/).filter(Boolean), image: $('editImage').value.trim() };
       const r = await api(`/api/products/${encodeURIComponent(editing.id)}/edit`, { method: 'POST', body });
       closeSheets(); editing = null;
-      toast(r.changed.length ? `Saved${r.skuvault ? ' · SkuVault updated' : ''}` : 'Nothing changed');
+      toast(r.changed.length ? 'Saved' : 'Nothing changed');
       await loadCatalogue();
     } catch (err) { $('editErr').textContent = err.message; }
     finally { btn.disabled = false; btn.textContent = 'Save'; }
@@ -369,21 +347,7 @@
 
   // ------------------------------------------------------------ cart
 
-  // Out of stock: a red warning before the item goes in, with a way to add it anyway
-  // (the count in SkuVault can lag what is on the shelf).
-  let stockGo = null;
-  const stockGuard = (product, qty, go) => {
-    if (product.stock == null || qty <= product.stock) { go(); return; }
-    stockGo = go;
-    $('stockWarnName').textContent = product.name;
-    $('stockWarnTitle').textContent = product.stock <= 0 ? 'Out of stock' : 'Not enough stock';
-    $('stockWarnMsg').textContent = product.stock <= 0 ? 'SkuVault shows none left at this store.'
-      : `SkuVault shows only ${product.stock} left: this would make ${qty} in the sale.`;
-    openSheet('stockSheet');
-  };
-  $('stockAdd').addEventListener('click', () => { const go = stockGo; stockGo = null; closeSheets(); if (go) go(); });
-
-  // ---- custom item: a name and a price typed at the till, no catalogue product or stock
+  // ---- custom item: a name and a price typed at the till, no catalogue product
   const openCustom = () => {
     $('customName').value = ''; $('customPrice').value = ''; $('customQty').value = '1'; $('customErr').textContent = '';
     openSheet('customSheet');
@@ -397,18 +361,16 @@
     if (price > 10000) { $('customErr').textContent = 'A custom item can be at most $10,000'; return; }
     if (!(qty >= 1 && qty <= 999)) { $('customErr').textContent = 'Quantity is 1 to 999'; return; }
     const name = $('customName').value.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Custom item';
-    state.cart.push({ product: { id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, custom: true, sku: 'CUSTOM', name, price: price.toFixed(2), category: 'Custom', stock: null }, qty, barcode: null });
+    state.cart.push({ product: { id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, custom: true, sku: 'CUSTOM', name, price: price.toFixed(2), category: 'Custom' }, qty, barcode: null });
     closeSheets(); renderCart();
   });
   ['customName', 'customPrice', 'customQty'].forEach((id) => $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('customAdd').click(); } }));
 
   const addToCart = (product, barcode) => {
     const line = state.cart.find((l) => l.product.id === product.id);
-    stockGuard(product, (line ? line.qty : 0) + 1, () => {
-      if (line) line.qty += 1;
-      else state.cart.push({ product, qty: 1, barcode: barcode || null });
-      renderCart();
-    });
+    if (line) line.qty += 1;
+    else state.cart.push({ product, qty: 1, barcode: barcode || null });
+    renderCart();
   };
 
   // A line's discount: a dollar amount or a percentage of the line, never more than the line.
@@ -457,7 +419,7 @@
     $('cartCount').textContent = `${count} item${count === 1 ? '' : 's'}`;
     $('cartLines').innerHTML = state.cart.length ? state.cart.map((l) => `
       <div class="line" data-id="${esc(l.product.id)}">
-        <div class="line-main">${thumb(l.product, 'mini')}<div><div class="n">${esc(l.product.name)}</div><div class="s">${esc(l.product.category)} · ${money(l.product.price)} each${l.product.stock != null && l.qty > l.product.stock ? ` · <b class="short">only ${l.product.stock} in stock</b>` : ''}</div></div></div>
+        <div class="line-main">${thumb(l.product, 'mini')}<div><div class="n">${esc(l.product.name)}</div><div class="s">${esc(l.product.category)} · ${money(l.product.price)} each</div></div></div>
         <div class="amt money">${lineDiscount(l) ? `<s>${money(lineGross(l))}</s>` : ''}${money(lineGross(l) - lineDiscount(l))}</div>
         <div class="qty">
           <button data-step="-1" aria-label="Less">−</button><span>${l.qty}</span><button data-step="1" aria-label="More">+</button>
@@ -485,9 +447,7 @@
     if (e.target.closest('[data-gift]')) { line.gift = !line.gift; renderCart(); return; }
     if (e.target.closest('[data-remove]')) state.cart = state.cart.filter((l) => l !== line);
     else if (e.target.closest('[data-step]')) {
-      const step = Number(e.target.closest('[data-step]').dataset.step);
-      if (step > 0) { stockGuard(line.product, line.qty + step, () => { line.qty += step; renderCart(); }); return; }
-      line.qty += step;
+      line.qty += Number(e.target.closest('[data-step]').dataset.step);
       if (line.qty <= 0) state.cart = state.cart.filter((l) => l !== line);
     }
     renderCart();

@@ -1,0 +1,20 @@
+# Render blueprint: New > Blueprint in the Render dashboard, pick this repo.
+# Secrets marked sync: false are typed into the dashboard once, never committed.
+services:
+  - type: web
+    name: pikumi-pos
+    runtime: docker
+    plan: free
+    rootDir: src/cloud_run
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: POS_MODE
+        value: store
+      - key: SUPABASE_DB_URL       # Supabase > Connect > Transaction pooler URI, password filled in
+        sync: false
+      - key: POS_ACCESS_CODE       # master code for the admin portal
+        sync: false
+      - key: CLOVER_PROXY_SECRET   # only if the store takes cards on the Clover Flex
+        sync: false

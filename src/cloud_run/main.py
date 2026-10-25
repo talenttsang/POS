@@ -11,17 +11,16 @@ approve refunds. The master code (below) opens the portal on its own, which is
 how the first admin gets created and how access is recovered.
 
 Env vars:
-  SUPABASE_DB_URL     Postgres connection string. If unset, read from Secret
-                      Manager (secret SUPABASE_DB_URL) with the runtime identity.
-  POS_ACCESS_CODE     Master code for the admin portal. If unset, read from
-                      Secret Manager (secret POS_ACCESS_CODE) and re-read every
-                      minute, so it can be created or rotated without a deploy.
+  SUPABASE_DB_URL     Postgres connection string (Supabase's transaction pooler).
+  POS_ACCESS_CODE     Master code for the admin portal.
+  COOKIE_SECURE       0 to send the session cookie over plain http (a LAN test
+                      box); default 1, HTTPS only. Browsers accept it on
+                      http://localhost either way.
 
 Venues (pos_events) come in two kinds: an event (a show, with dates) and a
 store (a permanent location, with an address). POS_MODE picks which kind this
 deployment sells under (default event); the register sells under the venue
 chosen in its header and Analytics reads one venue at a time.
-  GCP_PROJECT         Secret Manager project. Default shp-ai-bot-2026.
 """
 
 import csv
@@ -41,14 +40,12 @@ from functools import wraps
 
 import clover
 import psycopg
-import skuvault
 from flask import Flask, Response, abort, jsonify, request, send_from_directory, session
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
-PROJECT = os.environ.get("GCP_PROJECT", "shp-ai-bot-2026")
 MODE = os.environ.get("POS_MODE", "event")          # event | store
 if MODE not in ("event", "store"):
     raise SystemExit("POS_MODE must be event or store")
@@ -59,30 +56,9 @@ CENT = Decimal("0.01")
 # Secrets and configuration
 # ---------------------------------------------------------------------------
 
-_secret_cache = {}
-
-
-def secret(name, ttl=60):
-    """Env var first, then Secret Manager, cached for ttl seconds. None if absent."""
-    value = os.environ.get(name)
-    if value:
-        return value.strip()
-    hit = _secret_cache.get(name)
-    if hit and hit[0] > time.time():
-        return hit[1]
-    value = None
-    try:
-        from google.cloud import secretmanager
-
-        client = secretmanager.SecretManagerServiceClient()
-        response = client.access_secret_version(
-            request={"name": f"projects/{PROJECT}/secrets/{name}/versions/latest"}
-        )
-        value = response.payload.data.decode("utf-8").strip()
-    except Exception as exc:  # noqa: BLE001 - absence is a normal state here
-        app.logger.warning("secret %s unavailable: %s", name, type(exc).__name__)
-    _secret_cache[name] = (time.time() + ttl, value)
-    return value
+def secret(name):
+    """An environment variable, stripped; None if unset or blank."""
+    return (os.environ.get(name) or "").strip() or None
 
 
 def access_code():
@@ -91,12 +67,11 @@ def access_code():
 
 # The Flask session cookie is signed with a key derived from the database URL,
 # so it survives restarts and is the same across instances.
-_db_url = secret("SUPABASE_DB_URL", ttl=3600)
-SV = skuvault.Client(lambda name: secret(name, ttl=3600))
-CLV = clover.Client(lambda name: secret(name, ttl=3600))
+_db_url = secret("SUPABASE_DB_URL")
+CLV = clover.Client(secret)
 app.secret_key = hashlib.sha256(("pos-session:" + (_db_url or uuid.uuid4().hex)).encode()).digest()
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
-                  SESSION_COOKIE_SECURE=os.environ.get("K_SERVICE") is not None,
+                  SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "1") != "0",
                   PERMANENT_SESSION_LIFETIME=60 * 60 * 14)
 
 # ---------------------------------------------------------------------------
@@ -111,7 +86,7 @@ def pool():
     global _pool
     with _pool_lock:
         if _pool is None:
-            url = secret("SUPABASE_DB_URL", ttl=3600)
+            url = secret("SUPABASE_DB_URL")
             if not url:
                 abort(503, "database not configured")
             # Supabase's pooler runs in transaction mode: no server-side
@@ -242,7 +217,6 @@ def serialise_event(e):
             "address": e.get("address"),
             "startsOn": e["starts_on"].isoformat() if e.get("starts_on") else None,
             "endsOn": e["ends_on"].isoformat() if e.get("ends_on") else None,
-            "svWarehouse": e.get("sv_warehouse"), "svLocation": e.get("sv_location"),
             "cloverStore": e.get("clover_store"), "cloverDevice": e.get("clover_device"),
             "taxRate": str(e.get("tax_rate") or 0), "taxLabel": e.get("tax_label"),
             "currency": e["currency"], "isActive": e["is_active"]}
@@ -321,10 +295,6 @@ def event_fields(body, creating):
             fields[col] = date.fromisoformat(v)
     if "address" in body:
         fields["address"] = re.sub(r"\s+", " ", str(body.get("address") or "")).strip()[:200] or None
-    for key, col in (("svWarehouse", "sv_warehouse"), ("svLocation", "sv_location")):
-        if key in body:
-            v = re.sub(r"[^A-Za-z0-9_\-\[\]]", "", str(body.get(key) or "")).upper()[:40]
-            fields[col] = v or None
     for key, col in (("cloverStore", "clover_store"), ("cloverDevice", "clover_device")):
         if key in body:
             fields[col] = re.sub(r"[^A-Za-z0-9_\-]", "", str(body.get(key) or ""))[:80] or None
@@ -351,15 +321,8 @@ def event_fields(body, creating):
         fields["is_active"] = bool(body["isActive"])
     if fields.get("starts_on") and fields.get("ends_on") and fields["ends_on"] < fields["starts_on"]:
         abort(400, "end date is before start date")
-    if fields.get("sv_location") and not (fields.get("sv_warehouse") or body.get("svWarehouse")):
-        abort(400, "a SkuVault location needs its warehouse")
     if fields.get("clover_device") and not (fields.get("clover_store") or body.get("cloverStore")):
         abort(400, "a Clover device needs a Clover store key")
-    if fields.get("sv_warehouse"):
-        try:
-            SV.warehouse_id(fields["sv_warehouse"])
-        except skuvault.SkuVaultError as exc:
-            abort(400, str(exc))
     return fields
 
 
@@ -530,7 +493,7 @@ def admin_update_user(user_id):
 # Admin: products by CSV
 # ---------------------------------------------------------------------------
 
-CSV_COLUMNS = ["sku", "name", "category", "price", "cost", "quantity", "barcodes", "is_set", "is_clearance", "is_active", "note"]
+CSV_COLUMNS = ["sku", "name", "category", "price", "cost", "quantity", "barcodes", "is_set", "is_clearance", "is_active", "note", "image_url"]
 CSV_HELP = {
     "sku": "required, unique; matches an existing product to update it",
     "name": "shown on the register; defaults to the SKU",
@@ -543,6 +506,7 @@ CSV_HELP = {
     "is_clearance": "TRUE or FALSE",
     "is_active": "TRUE or FALSE; FALSE hides the product from the register",
     "note": "optional",
+    "image_url": "optional link to the product photo, starting https://",
 }
 MAX_CSV_BYTES = 2 * 1024 * 1024
 MAX_CSV_ROWS = 5000
@@ -563,8 +527,8 @@ def csv_response(rows, filename):
 @require_admin
 def products_template():
     rows = [CSV_COLUMNS,
-            ["EXAMPLE-SKU-1", "Example shampoo 350ml", "KR", "16.00", "7.50", "20", "8809640735561", "FALSE", "FALSE", "TRUE", ""],
-            ["EXAMPLE-SKU-2", "Example brush set", "CN", "8", "3.10", "12", "3331684122427|3331684122434", "TRUE", "FALSE", "TRUE", "two barcodes"],
+            ["EXAMPLE-SKU-1", "Example shampoo 350ml", "KR", "16.00", "7.50", "20", "8809640735561", "FALSE", "FALSE", "TRUE", "", "https://example.com/shampoo.jpg"],
+            ["EXAMPLE-SKU-2", "Example brush set", "CN", "8", "3.10", "12", "3331684122427|3331684122434", "TRUE", "FALSE", "TRUE", "two barcodes", ""],
             ["# delete the two example rows above; column meanings: " + "; ".join(f"{k} = {v}" for k, v in CSV_HELP.items())]]
     return csv_response(rows, "pos-products-template.csv")
 
@@ -573,7 +537,7 @@ def products_template():
 @require_admin
 def products_export():
     rows = query(
-        """select p.sku, p.name, p.category, p.price, p.cost, p.show_qty, p.is_set, p.is_clearance, p.is_active, p.note,
+        """select p.sku, p.name, p.category, p.price, p.cost, p.show_qty, p.is_set, p.is_clearance, p.is_active, p.note, p.image_url,
                   coalesce((select string_agg(b.barcode, '|' order by b.barcode) from pos_product_barcodes b where b.product_id = p.id), '') as barcodes
            from pos_products p order by p.category, p.name"""
     )
@@ -582,7 +546,7 @@ def products_export():
     def num(v):
         return "" if v is None else str(v)
     body = [CSV_COLUMNS] + [[r["sku"], r["name"], r["category"], num(r["price"]), num(r["cost"]), num(r["show_qty"]),
-                            r["barcodes"], flag(r["is_set"]), flag(r["is_clearance"]), flag(r["is_active"]), r["note"] or ""]
+                            r["barcodes"], flag(r["is_set"]), flag(r["is_clearance"]), flag(r["is_active"]), r["note"] or "", r["image_url"] or ""]
                            for r in rows]
     return csv_response(body, f"pos-products-{datetime.now(timezone.utc):%Y%m%d}.csv")
 
@@ -598,6 +562,14 @@ def parse_money_cell(text):
     if value < 0:
         raise ValueError(f"negative: {text!r}")
     return money(value)
+
+
+def image_url(text):
+    """A photo link as typed, or ValueError. Only http(s): the register puts it in an <img>."""
+    url = (text or "").strip()
+    if not re.fullmatch(r"https?://\S{3,1000}", url, re.IGNORECASE):
+        raise ValueError(f"not a web link: {url[:60]!r}")
+    return url
 
 
 def parse_flag(text):
@@ -740,6 +712,8 @@ def parse_products_csv(raw, filename=None):
                         record[key] = v
             if "note" in cell:
                 record["note"] = cell["note"]
+            if "image_url" in cell:
+                record["image_url"] = image_url(cell["image_url"])
             if "barcodes" in cell:
                 record["barcodes"] = [b.strip() for b in re.split(r"[|;]", cell["barcodes"]) if b.strip()]
         except ValueError as exc:
@@ -785,7 +759,7 @@ def products_import():
     for r in to_add:
         if r.get("price") is None:
             problems.append(f"row {r['row']} {r['sku']}: new product without a price, imported as unsellable")
-    unchanged = [r for r in to_update if not any(k in r for k in ("name", "category", "price", "cost", "show_qty", "is_set", "is_clearance", "is_active", "note", "barcodes"))]
+    unchanged = [r for r in to_update if not any(k in r for k in ("name", "category", "price", "cost", "show_qty", "is_set", "is_clearance", "is_active", "note", "image_url", "barcodes"))]
     if unchanged:
         problems.append(f"{len(unchanged)} row(s) had only a sku and change nothing")
     missing = query("select sku from pos_products where is_active and not (sku = any(%s)) order by sku", (skus,)) if deactivate_missing else []
@@ -800,7 +774,7 @@ def products_import():
     with pool().connection() as conn:
         with conn.transaction():
             for r in rows:
-                fields = {k: v for k, v in r.items() if k in ("name", "category", "price", "cost", "show_qty", "is_set", "is_clearance", "is_active", "note")}
+                fields = {k: v for k, v in r.items() if k in ("name", "category", "price", "cost", "show_qty", "is_set", "is_clearance", "is_active", "note", "image_url")}
                 is_new = r["sku"] not in existing
                 if is_new:
                     fields.setdefault("name", r["sku"])
@@ -852,12 +826,9 @@ def admin_page():
 # Products
 # ---------------------------------------------------------------------------
 
-# Product photos come from the SkuVault-synced `products` table (pictures[]),
-# matched on SKU. A scalar subquery keeps pos_products free of copied URLs and
-# picks up new photos as soon as that table syncs.
-IMAGE_SQL = ("(select pr.pictures[1] from products pr where pr.sku = p.sku"
-             " and cardinality(pr.pictures) > 0 and pr.pictures[1] <> '' limit 1) as image_url")
-PRODUCT_COLS = f"p.id, p.sku, p.name, p.category, p.price, p.is_set, p.is_clearance, p.show_qty, {IMAGE_SQL}"
+# Product photos are links in pos_products.image_url, set by the product upload
+# or the register's edit sheet.
+PRODUCT_COLS = "p.id, p.sku, p.name, p.category, p.price, p.is_set, p.is_clearance, p.show_qty, p.image_url"
 
 
 @app.get("/api/products")
@@ -867,13 +838,6 @@ def products():
     category = request.args.get("category", "").strip()
     where = ["p.is_active", "p.price is not null"]
     params = []
-    stock = venue_stock(event_from_request(required=False))
-    if request.args.get("inStock") == "1" and stock is not None:
-        # Filtered in the query, not the browser: the list is capped, and most of
-        # the catalogue can be out of stock, so a client-side filter would hide
-        # in-stock items that never made the first page.
-        where.append("p.sku = any(%s)")
-        params.append([sku for sku, n in stock.items() if n > 0])
     if category and category != "all":
         where.append("p.category = %s")
         params.append(category)
@@ -890,7 +854,7 @@ def products():
         "case when p.category = 'Clearance' or p.is_clearance then p.price end, p.name limit 300",
         params + rank_params,
     )
-    return jsonify([serialise_product(r, stock) for r in rows])
+    return jsonify([serialise_product(r) for r in rows])
 
 
 # What a product is searched by: its name and SKU, lower-cased, with every run of
@@ -934,55 +898,36 @@ def fuzzy_search(q):
     return cond, params, "(" + " + ".join(score) + ") desc, ", score_params
 
 
-def venue_stock(event):
-    """{sku: on hand} at the venue's SkuVault location, or None when the venue
-    has no location or SkuVault cannot be reached right now."""
-    if not event or not event.get("sv_warehouse"):
-        return None
-    try:
-        # No location set: the whole warehouse, every bin in it.
-        return SV.stock(event["sv_warehouse"], event.get("sv_location"))
-    except skuvault.SkuVaultError as exc:
-        app.logger.warning("stock unavailable: %s", exc)
-        return None
-
-
 BARCODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_.]{2,39}$")
 
 
-def sv_record(sku):
-    """The product as SkuVault has it, from the public.products mirror in Supabase
-    (kept in sync from SkuVault), or None if the SKU is not in SkuVault."""
-    return query("select sku, code, description, brand from public.products where lower(sku) = lower(%s) limit 1", (sku,), one=True)
+def product_codes(product_id):
+    return [r["barcode"] for r in query("select barcode from pos_product_barcodes where product_id = %s order by created_at",
+                                        (str(product_id),))]
 
 
 @app.get("/api/products/<uuid:product_id>/detail")
 @require_unlock
-def admin_product_detail(product_id):
-    """What the edit sheet shows: the register's fields and SkuVault's record."""
-    p = query("select id, sku, name, category, price from pos_products where id = %s", (str(product_id),), one=True)
+def product_detail(product_id):
+    """What the edit sheet shows."""
+    p = query("select id, sku, name, category, price, image_url from pos_products where id = %s", (str(product_id),), one=True)
     if not p:
         abort(404, "no such product")
-    codes = [r["barcode"] for r in query("select barcode from pos_product_barcodes where product_id = %s order by created_at",
-                                          (str(product_id),))]
-    sv = sv_record(p["sku"])
     return jsonify({"id": str(p["id"]), "sku": p["sku"], "name": p["name"], "category": p["category"],
-                    "price": str(p["price"]) if p["price"] is not None else None, "barcodes": codes,
-                    "skuvault": {"found": bool(sv), "code": (sv or {}).get("code") or "",
-                                 "description": (sv or {}).get("description") or "", "brand": (sv or {}).get("brand") or ""}})
+                    "price": str(p["price"]) if p["price"] is not None else None, "image": p["image_url"] or "",
+                    "barcodes": product_codes(product_id)})
 
 
 @app.post("/api/products/<uuid:product_id>/edit")
 @require_unlock
-def admin_product_edit(product_id):
-    """Save the edit sheet. SkuVault first (barcode, description): if it refuses,
-    nothing changes. Then, in one transaction, the register's fields, its scan
-    codes and the public.products mirror, so the change shows before the next sync."""
+def product_edit(product_id):
+    """Save the edit sheet in one transaction: the product's fields and its full
+    list of scan codes. Each save is logged in pos_product_edits."""
     body = request.get_json(silent=True) or {}
-    p = query("select id, sku, name, category, price from pos_products where id = %s", (str(product_id),), one=True)
+    p = query("select id, sku, name, category, price, image_url from pos_products where id = %s", (str(product_id),), one=True)
     if not p:
         abort(404, "no such product")
-    changes, sv_fields = {}, {}
+    changes = {}
 
     name = re.sub(r"\s+", " ", str(body.get("name", p["name"]) or "")).strip()[:200]
     if not name:
@@ -1002,76 +947,55 @@ def admin_product_edit(product_id):
             abort(400, "price cannot be negative")
         if p["price"] is None or price != money(p["price"]):
             changes["price"] = {"from": str(p["price"]) if p["price"] is not None else None, "to": str(price)}
+    image = p["image_url"]
+    if "image" in body:
+        typed = str(body.get("image") or "").strip()
+        try:
+            image = image_url(typed) if typed else None
+        except ValueError:
+            abort(400, "the photo must be a link starting https://")
+        if image != p["image_url"]:
+            changes["image_url"] = {"from": p["image_url"], "to": image}
 
-    sv = sv_record(p["sku"])
-    old_code = (sv or {}).get("code") or ""
-    barcode = str(body.get("barcode", old_code) or "").strip()
-    if barcode != old_code:
-        if not barcode:
-            abort(400, "a barcode cannot be blanked; type the new one")
-        if not BARCODE_RE.match(barcode):
-            abort(400, "a barcode is 3 to 40 letters or digits")
-        clash = query("select p.sku, p.name from pos_product_barcodes b join pos_products p on p.id = b.product_id "
-                      "where b.barcode = %s and b.product_id <> %s", (barcode, str(product_id)), one=True)
+    old_codes = product_codes(product_id)
+    codes = old_codes
+    if "barcodes" in body:
+        typed = body.get("barcodes")
+        typed = typed if isinstance(typed, list) else re.split(r"[\s,|;]+", str(typed or ""))
+        codes = list(dict.fromkeys(c.strip() for c in typed if str(c).strip()))
+        for code in codes:
+            if not BARCODE_RE.match(code):
+                abort(400, f"{code[:40]!r}: a barcode is 3 to 40 letters or digits")
+        clash = query("select b.barcode, p.sku, p.name from pos_product_barcodes b join pos_products p on p.id = b.product_id "
+                      "where b.barcode = any(%s) and b.product_id <> %s limit 1", (codes, str(product_id)), one=True)
         if clash:
-            abort(409, f"barcode {barcode} already belongs to {clash['name']} ({clash['sku']}) on the register")
-        owner = query("select sku from public.products where lower(code) = lower(%s) and lower(sku) <> lower(%s) limit 1",
-                      (barcode, p["sku"]), one=True)
-        if owner:
-            abort(409, f"barcode {barcode} already belongs to {owner['sku']} in SkuVault")
-        if sv:
-            sv_fields["Code"] = barcode
-        changes["barcode"] = {"from": old_code or None, "to": barcode}
-    if "svDescription" in body and sv:
-        desc = re.sub(r"\s+", " ", str(body.get("svDescription") or "")).strip()[:500]
-        if desc and desc != (sv.get("description") or ""):
-            sv_fields["Description"] = desc
-            changes["skuvault_description"] = {"from": sv.get("description"), "to": desc}
+            abort(409, f"barcode {clash['barcode']} already belongs to {clash['name']} ({clash['sku']})")
+        if sorted(codes) != sorted(old_codes):
+            changes["barcodes"] = {"from": old_codes, "to": codes}
     if not changes:
         return jsonify({"ok": True, "changed": []})
 
-    sv_log = None
-    if sv_fields:
-        try:
-            sent, reply = SV.update_product(sv["sku"], sv_fields)
-            sv_log = {"sent": sent, "reply": reply}
-        except skuvault.SkuVaultError as exc:
-            abort(502, str(exc))
     with pool().connection() as conn:
         with conn.transaction():
-            conn.execute("update pos_products set name = %s, category = %s, price = %s where id = %s",
-                         (name, category, price, str(product_id)))
-            if "barcode" in changes:
-                # The old SkuVault barcode stops scanning to this product; other scan
-                # codes the register knows for it (case packs, ASINs) are kept.
-                if old_code:
-                    conn.execute("delete from pos_product_barcodes where barcode = %s and product_id = %s",
-                                 (old_code, str(product_id)))
-                conn.execute("insert into pos_product_barcodes (barcode, product_id) values (%s, %s) on conflict (barcode) do nothing",
-                             (barcode, str(product_id)))
-            if sv_fields:
-                conn.execute("update public.products set code = coalesce(%s, code), description = coalesce(%s, description) "
-                             "where sku = %s", (sv_fields.get("Code"), sv_fields.get("Description"), sv["sku"]))
-            conn.execute("insert into pos_product_edits (product_id, sku, changes, skuvault, edited_by) values (%s, %s, %s, %s, %s)",
-                         (str(product_id), p["sku"], json.dumps(changes), json.dumps(sv_log) if sv_log else None,
-                          session.get("staff") or "unknown"))
-    return jsonify({"ok": True, "changed": list(changes), "skuvault": bool(sv_fields), "skuvaultFound": bool(sv)})
+            conn.execute("update pos_products set name = %s, category = %s, price = %s, image_url = %s where id = %s",
+                         (name, category, price, image, str(product_id)))
+            if "barcodes" in changes:
+                conn.execute("delete from pos_product_barcodes where product_id = %s and not (barcode = any(%s))",
+                             (str(product_id), codes))
+                for code in codes:
+                    conn.execute("insert into pos_product_barcodes (barcode, product_id) values (%s, %s) on conflict (barcode) do nothing",
+                                 (code, str(product_id)))
+            conn.execute("insert into pos_product_edits (product_id, sku, changes, edited_by) values (%s, %s, %s, %s)",
+                         (str(product_id), p["sku"], json.dumps(changes), session.get("staff") or "unknown"))
+    return jsonify({"ok": True, "changed": list(changes)})
 
 
 @app.get("/api/categories")
 @require_unlock
 def categories():
-    # Each category also carries how many of its products are in stock at this
-    # venue, for the register's "In stock" filter; null where the venue has no stock feed.
-    stock = venue_stock(event_from_request(required=False))
-    skus = [sku for sku, n in (stock or {}).items() if n > 0]
-    rows = query(
-        "select category, count(*) as n, count(*) filter (where sku = any(%s)) as in_stock from pos_products "
-        "where is_active and price is not null group by 1 order by (category = 'Clearance'), 1", (skus,))
-    if stock is None:
-        for r in rows:
-            r["in_stock"] = None
-    return jsonify(rows)
+    return jsonify(query(
+        "select category, count(*) as n from pos_products "
+        "where is_active and price is not null group by 1 order by (category = 'Clearance'), 1"))
 
 
 @app.get("/api/barcode/<code>")
@@ -1088,15 +1012,14 @@ def by_barcode(code):
                     (code.strip(),), one=True)
     if not row:
         abort(404, "no product with that barcode")
-    return jsonify(serialise_product(row, venue_stock(event_from_request(required=False))))
+    return jsonify(serialise_product(row))
 
 
-def serialise_product(r, stock=None):
+def serialise_product(r):
     return {
         "id": str(r["id"]), "sku": r["sku"], "name": r["name"], "category": r["category"],
         "price": str(r["price"]), "isSet": r["is_set"], "isClearance": r["is_clearance"], "showQty": r["show_qty"],
         "image": r.get("image_url"),
-        "stock": None if stock is None else stock.get(r["sku"], 0),
     }
 
 
@@ -1124,8 +1047,7 @@ CUSTOM_MAX_PRICE = Decimal("10000")
 
 
 def custom_product(item, n):
-    """A line the cashier typed in: their name and price, no catalogue product and
-    no SkuVault stock behind it."""
+    """A line the cashier typed in: their name and price, no catalogue product behind it."""
     name = re.sub(r"\s+", " ", str(item.get("name") or "")).strip()[:80] or "Custom item"
     try:
         price = money(item.get("unitPrice"))
@@ -1217,8 +1139,6 @@ def insert_sale(conn, record_id, event, lines, discount, note, payment_method, c
             (txn["id"], l["line_no"], p["sku"], p["name"], p["category"], l["quantity"], l["unit_price"],
              l.get("line_discount", 0), p["id"], l["barcode"], l.get("gift", False)),
         )
-    queue_moves(conn, txn, event, "out",
-                [{"line_no": l["line_no"], "sku": l["product"]["sku"], "quantity": l["quantity"]} for l in lines])
     return txn, True
 
 
@@ -1236,8 +1156,6 @@ def create_sale():
                                        cash=body.get("cashReceived"), staff=session.get("staff"), user_id=session.get("user_id"),
                                        tax_exempt=bool(body.get("taxExempt")))
             payload = sale_payload(conn, txn)
-    if created:
-        start_move_worker()
     return jsonify(payload), 201 if created else 200
 
 
@@ -1357,8 +1275,6 @@ def settle_card(record_id, outcome, pid, message, raw, staff, user_id):
             else:
                 conn.execute("update pos_card_payments set status = %s, message = %s, response = %s, updated_at = now() where id = %s",
                              (outcome, (message or "")[:300], json.dumps(raw)[:4000] if raw is not None else None, row["id"]))
-    if outcome == "paid":
-        start_move_worker()
 
 
 def card_status_payload(row, sale=None):
@@ -1406,150 +1322,6 @@ def admin_clover_devices():
         return jsonify(CLV.devices(store))
     except clover.CloverError as exc:
         abort(502, str(exc))
-
-
-# ---------------------------------------------------------------------------
-# Inventory sync: each sale line leaves the venue's SkuVault location, and a
-# full refund puts it back. Moves are rows first, then sent by a worker, so a
-# SkuVault outage never blocks a sale and a failed call can be retried.
-# ---------------------------------------------------------------------------
-_move_lock = threading.Lock()
-MOVE_ATTEMPTS = 5
-# SkuVault only accepts reasons defined under Admin > Reasons in the account.
-REASON_OUT = os.environ.get("SKUVAULT_REASON_OUT", "Sold")
-REASON_IN = os.environ.get("SKUVAULT_REASON_IN", "Return (Bricks & Mortar)")
-
-
-AUTO_BIN = "*"   # pos_inventory_moves.location before a bin is picked
-
-
-def queue_moves(conn, txn, event, direction, lines):
-    if not event or not event.get("sv_warehouse"):
-        return
-    loc = event.get("sv_location") or AUTO_BIN
-    for l in lines:
-        if l["sku"] == CUSTOM_SKU:      # typed in at the till: nothing to take out of SkuVault
-            continue
-        conn.execute(
-            """insert into pos_inventory_moves (transaction_id, line_no, sku, quantity, direction, warehouse, location)
-               values (%s, %s, %s, %s, %s, %s, %s) on conflict (transaction_id, line_no, direction) do nothing""",
-            (txn["id"], l["line_no"], l["sku"], l["quantity"], direction, event["sv_warehouse"], loc),
-        )
-        # Reflect it in the register straight away; the worker confirms with SkuVault.
-        SV.adjust(event["sv_warehouse"], None if loc == AUTO_BIN else loc, l["sku"],
-                  -l["quantity"] if direction == "out" else l["quantity"])
-
-
-def start_move_worker():
-    threading.Thread(target=process_moves, daemon=True).start()
-
-
-def plan_picks(conn, row):
-    """Where in the warehouse this move happens: [(bin, qty)].
-    A sale takes from the bins that hold the SKU, fullest first; a refund puts
-    units back where its sale took them from."""
-    if row["location"] != AUTO_BIN:
-        return [(row["location"], row["quantity"])]
-    if row["direction"] == "in":
-        sold = conn.execute(
-            """select response from pos_inventory_moves where transaction_id = %s and line_no = %s and direction = 'out'
-                 and status = 'ok'""", (row["transaction_id"], row["line_no"])).fetchone()
-        picks = ((sold or {}).get("response") or {}).get("picks") if sold else None
-        if picks:
-            # Bins get renamed and recreated: a bin the sale took from may be gone, so
-            # anything bound for a missing bin goes to the warehouse's top-level location.
-            try:
-                live = SV.locations(row["warehouse"])
-            except skuvault.SkuVaultError:
-                live = None
-            out = {}
-            for p in picks:
-                loc = p["location"] if live is None or str(p["location"]).upper() in live else row["warehouse"]
-                out[loc] = out.get(loc, 0) + p["quantity"]
-            return list(out.items())
-        return [(row["warehouse"], row["quantity"])]      # the warehouse's own top-level location
-    bins = SV.bins(row["warehouse"], row["sku"])
-    need, picks = row["quantity"], []
-    for code, qty in bins:
-        take = min(need, qty)
-        if take:
-            picks.append((code, take)); need -= take
-        if not need:
-            return picks
-    have = row["quantity"] - need
-    raise skuvault.SkuVaultError(f"only {have} of {row['sku']} in {row['warehouse']}; receive stock into a bin, then retry")
-
-
-def process_moves():
-    """Send every pending or retryable move, one SkuVault call per sale and direction."""
-    if not _move_lock.acquire(blocking=False):
-        return {"skipped": "already running"}
-    done = failed = 0
-    try:
-        with pool().connection() as conn:
-            rows = conn.execute(
-                """select m.*, t.transaction_number from pos_inventory_moves m join pos_transactions t on t.id = m.transaction_id
-                   where m.status <> 'ok' and m.attempts < %s order by m.created_at""", (MOVE_ATTEMPTS,)
-            ).fetchall()
-            groups = {}
-            for r in rows:
-                groups.setdefault((r["transaction_id"], r["direction"], r["warehouse"]), []).append(r)
-            for (txn_id, direction, wh), group in groups.items():
-                number = group[0]["transaction_number"]
-                note = f"POS sale #{number}" if direction == "out" else f"POS refund of sale #{number}"
-                planned = []
-                for r in group:
-                    try:
-                        planned.append((r, plan_picks(conn, r)))
-                    except skuvault.SkuVaultError as exc:
-                        conn.execute("update pos_inventory_moves set status = 'failed', attempts = attempts + 1, last_error = %s, "
-                                     "updated_at = now() where id = %s", (str(exc)[:500], r["id"]))
-                        failed += 1
-                if planned:
-                    items = [{"sku": r["sku"], "quantity": q, "location": loc, "note": note} for r, picks in planned for loc, q in picks]
-                    try:
-                        resp = SV.move_items(direction, wh, items, REASON_OUT if direction == "out" else REASON_IN)
-                        for r, picks in planned:
-                            conn.execute(
-                                """update pos_inventory_moves set status = 'ok', attempts = attempts + 1, last_error = null,
-                                     location = %s, response = %s, done_at = now(), updated_at = now() where id = %s""",
-                                ("+".join(loc for loc, _ in picks)[:200],
-                                 json.dumps({"picks": [{"location": loc, "quantity": q} for loc, q in picks], "skuvault": resp})[:4000],
-                                 r["id"]))
-                            if direction == "out":
-                                # Picking re-read SkuVault from before this sale left; show it gone again.
-                                for loc, q in picks:
-                                    SV.adjust(wh, loc, r["sku"], -q)
-                        done += len(planned)
-                    except skuvault.SkuVaultError as exc:
-                        app.logger.warning("inventory move failed for sale #%s: %s", number, exc)
-                        conn.execute("update pos_inventory_moves set status = 'failed', attempts = attempts + 1, last_error = %s, "
-                                     "updated_at = now() where id = any(%s)", (str(exc)[:500], [r["id"] for r, _ in planned]))
-                        failed += len(planned)
-                conn.commit()
-    except Exception as exc:  # the worker must never take the request thread down
-        app.logger.exception("inventory worker: %s", exc)
-    finally:
-        _move_lock.release()
-    return {"sent": done, "failed": failed}
-
-
-@app.get("/api/admin/inventory")
-@require_admin
-def admin_inventory():
-    rows = query(
-        """select m.id, t.transaction_number as sale, m.line_no, m.sku, m.quantity, m.direction, m.warehouse, m.location,
-                  m.status, m.attempts, m.last_error, m.created_at, m.done_at
-           from pos_inventory_moves m join pos_transactions t on t.id = m.transaction_id
-           order by (m.status = 'ok'), m.created_at desc limit 200""")
-    return jsonify([{**r, "created_at": r["created_at"].isoformat(), "done_at": r["done_at"].isoformat() if r["done_at"] else None} for r in rows])
-
-
-@app.post("/api/admin/inventory/retry")
-@require_admin
-def admin_inventory_retry():
-    query("update pos_inventory_moves set attempts = 0, updated_at = now() where status = 'failed' returning id")
-    return jsonify(process_moves())
 
 
 def sale_payload(conn, txn):
@@ -1650,13 +1422,7 @@ def refund(number):
                    where id = %s returning *""",
                 (amount, method, reason, approver, full, t["id"]),
             ).fetchone()
-            if full:
-                event = conn.execute("select * from pos_events where id = %s", (t["event_id"],)).fetchone() if t["event_id"] else None
-                items = conn.execute("select line_no, sku, quantity from pos_transaction_items where transaction_id = %s", (t["id"],)).fetchall()
-                queue_moves(conn, t, event, "in", items)
             payload = sale_payload(conn, t)
-    if full:
-        start_move_worker()
     return jsonify(payload)
 
 

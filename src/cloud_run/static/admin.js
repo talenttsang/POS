@@ -22,7 +22,7 @@
   const closeSheets = () => { $('scrim').classList.remove('on'); document.querySelectorAll('.sheet').forEach((s) => s.classList.remove('on')); };
 
   const showLogin = () => { $('lock').hidden = false; $('admin').hidden = true; };
-  const showAdmin = async () => { $('lock').hidden = true; $('admin').hidden = false; $('whoPill').textContent = me.staff; await Promise.all([loadUsers(), loadEvents(), loadInventory()]); };
+  const showAdmin = async () => { $('lock').hidden = true; $('admin').hidden = false; $('whoPill').textContent = me.staff; await Promise.all([loadUsers(), loadEvents()]); };
 
   let mode = 'user';
   const setMode = (m) => {
@@ -137,7 +137,7 @@
       const state = !e.isActive ? ['refunded', 'Archived'] : e.kind === 'store' ? ['', 'Open'] : (e.startsOn <= t && t <= e.endsOn) ? ['', 'Running'] : e.startsOn > t ? ['partial', 'Upcoming'] : ['', 'Past'];
       return `<tr class="${e.isActive ? '' : 'inactive'}" data-id="${esc(e.id)}">
         <td><b>${esc(e.name)}</b><div class="hint">${esc(e.code)}</div></td>
-        <td>${e.kind === 'store' ? `${esc(e.address || '')}${e.svWarehouse ? `<div class="hint">SkuVault ${esc(e.svWarehouse)}${e.svLocation ? ` / ${esc(e.svLocation)}` : ' · all bins'}</div>` : ''}${e.cloverStore ? `<div class="hint">Clover ${esc(e.cloverStore)}${e.cloverDevice ? ` · Flex ${esc(e.cloverDevice)}` : ''}</div>` : ''}` : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
+        <td>${e.kind === 'store' ? `${esc(e.address || '')}${e.cloverStore ? `<div class="hint">Clover ${esc(e.cloverStore)}${e.cloverDevice ? ` · Flex ${esc(e.cloverDevice)}` : ''}</div>` : ''}` : `${esc(e.startsOn)} → ${esc(e.endsOn)}`}</td>
         <td>${esc(e.currency)}${Number(e.taxRate) ? `<div class="hint">${esc(e.taxLabel || `${(Number(e.taxRate) * 100).toFixed(2).replace(/\.?0+$/, '')}% tax`)}</div>` : '<div class="hint">no tax</div>'}</td>
         <td><span class="status ${state[0]}">${state[1]}</span></td>
         <td class="actions">
@@ -150,9 +150,9 @@
     e.preventDefault(); $('evErr').textContent = '';
     try {
       const body = { name: $('evName').value, currency: $('evCurrency').value, taxRate: $('evTaxRate').value || '0', taxLabel: $('evTaxLabel').value };
-      if (posMode === 'store') { body.address = $('evAddress').value; body.svWarehouse = $('evSvWarehouse').value; body.svLocation = $('evSvLocation').value; body.cloverStore = $('evCloverStore').value; body.cloverDevice = $('evCloverDevice').value; } else { body.startsOn = $('evStart').value; body.endsOn = $('evEnd').value; }
+      if (posMode === 'store') { body.address = $('evAddress').value; body.cloverStore = $('evCloverStore').value; body.cloverDevice = $('evCloverDevice').value; } else { body.startsOn = $('evStart').value; body.endsOn = $('evEnd').value; }
       const ev = await api('/api/admin/events', { method: 'POST', body });
-      $('evName').value = ''; $('evStart').value = ''; $('evEnd').value = ''; $('evAddress').value = ''; $('evSvWarehouse').value = ''; $('evSvLocation').value = ''; $('evCloverStore').value = ''; $('evCloverDevice').value = ''; $('evTaxRate').value = ''; $('evTaxLabel').value = '';
+      $('evName').value = ''; $('evStart').value = ''; $('evEnd').value = ''; $('evAddress').value = ''; $('evCloverStore').value = ''; $('evCloverDevice').value = ''; $('evTaxRate').value = ''; $('evTaxLabel').value = '';
       toast(`Added ${ev.name}`); await loadEvents();
     } catch (err) { $('evErr').textContent = err.message; }
   });
@@ -160,7 +160,7 @@
     const btn = e.target.closest('[data-eact]'); if (!btn) return;
     const ev = events.find((x) => x.id === btn.closest('tr').dataset.id); if (!ev) return;
     if (btn.dataset.eact === 'edit') {
-      editing = ev; $('esName').textContent = ev.name; $('esNameInput').value = ev.name; $('esStart').value = ev.startsOn || ''; $('esEnd').value = ev.endsOn || ''; $('esAddress').value = ev.address || ''; $('esSvWarehouse').value = ev.svWarehouse || ''; $('esSvLocation').value = ev.svLocation || ''; $('esCloverStore').value = ev.cloverStore || ''; $('esCloverDevice').value = ev.cloverDevice || ''; $('esDevices').textContent = ''; $('esTaxRate').value = Number(ev.taxRate) ? String(+(Number(ev.taxRate) * 100).toFixed(3)) : ''; $('esTaxLabel').value = ev.taxLabel || ''; $('esCurrency').value = ev.currency; $('esErr').textContent = '';
+      editing = ev; $('esName').textContent = ev.name; $('esNameInput').value = ev.name; $('esStart').value = ev.startsOn || ''; $('esEnd').value = ev.endsOn || ''; $('esAddress').value = ev.address || ''; $('esCloverStore').value = ev.cloverStore || ''; $('esCloverDevice').value = ev.cloverDevice || ''; $('esDevices').textContent = ''; $('esTaxRate').value = Number(ev.taxRate) ? String(+(Number(ev.taxRate) * 100).toFixed(3)) : ''; $('esTaxLabel').value = ev.taxLabel || ''; $('esCurrency').value = ev.currency; $('esErr').textContent = '';
       openSheet('eventSheet'); return;
     }
     try {
@@ -173,7 +173,7 @@
     if (!editing) return;
     try {
       const body = { name: $('esNameInput').value, currency: $('esCurrency').value, taxRate: $('esTaxRate').value || '0', taxLabel: $('esTaxLabel').value };
-      if (posMode === 'store') { body.address = $('esAddress').value; body.svWarehouse = $('esSvWarehouse').value; body.svLocation = $('esSvLocation').value; body.cloverStore = $('esCloverStore').value; body.cloverDevice = $('esCloverDevice').value; } else { body.startsOn = $('esStart').value; body.endsOn = $('esEnd').value; }
+      if (posMode === 'store') { body.address = $('esAddress').value; body.cloverStore = $('esCloverStore').value; body.cloverDevice = $('esCloverDevice').value; } else { body.startsOn = $('esStart').value; body.endsOn = $('esEnd').value; }
       await api(`/api/admin/events/${editing.id}`, { method: 'PATCH', body });
       closeSheets(); toast(`${posMode === 'store' ? 'Store' : 'Event'} updated`); await loadEvents();
     } catch (err) { $('esErr').textContent = err.message; }
@@ -191,24 +191,6 @@
     } catch (err) { $('esDevices').textContent = err.message; }
   });
   $('esDevices').addEventListener('click', (e) => { const b = e.target.closest('[data-serial]'); if (b) $('esCloverDevice').value = b.dataset.serial; });
-
-  // ---- inventory sync
-  const loadInventory = async () => {
-    $('invErr').textContent = '';
-    try {
-      const rows = await api('/api/admin/inventory');
-      $('invRows').innerHTML = rows.length ? rows.map((m) => `<tr>
-        <td>#${m.sale}</td><td>${esc(m.sku)}</td><td>${m.direction === 'out' ? '−' : '+'}${m.quantity}</td><td>${esc(m.warehouse)} / ${esc(m.location)}</td>
-        <td><span class="status ${m.status === 'ok' ? '' : m.status === 'failed' ? 'refunded' : 'partial'}">${m.status === 'ok' ? 'Sent' : m.status === 'failed' ? 'Failed' : 'Pending'}</span></td>
-        <td class="hint">${m.status === 'ok' ? new Date(m.done_at).toLocaleString('en-CA') : esc(m.last_error || '')}${m.attempts > 1 ? ` · ${m.attempts} tries` : ''}</td></tr>`).join('')
-        : '<tr><td colspan="6" class="hint">No inventory moves yet. Set a SkuVault warehouse and location on a store to start syncing.</td></tr>';
-    } catch (err) { $('invErr').textContent = err.message; }
-  };
-  $('invRefresh').addEventListener('click', loadInventory);
-  $('invRetry').addEventListener('click', async () => {
-    try { const r = await api('/api/admin/inventory/retry', { method: 'POST', body: {} }); toast(`Sent ${r.sent || 0}, failed ${r.failed || 0}`); await loadInventory(); }
-    catch (err) { $('invErr').textContent = err.message; }
-  });
 
   // ---- products by CSV
   const sendCsv = async (preview) => {
