@@ -102,8 +102,8 @@
       </div>
       <div class="totals" id="cartTotals"></div>
       <div class="cta">
-        <button class="btn primary" id="chargeBtn" disabled>Charge</button>
-        <button class="btn pay-card" id="cardBtn" disabled hidden>Card</button>
+        <button class="btn primary" id="chargeBtn" disabled>Cash</button>
+        <button class="btn pay-card" id="cardBtn" disabled>Card</button>
       </div>
     </aside>
   </section>
@@ -254,9 +254,9 @@
 </div>
 <div class="sheet" id="cardSheet">
   <h3>Card payment <span id="cardAmount" class="money"></span></h3>
-  <p id="cardStatus">Sending to the Clover Flex…</p>
+  <p>Run this amount on the card terminal. When it is approved, record the sale here.</p>
   <div class="err" id="cardErr"></div>
-  <div class="row"><button class="btn ghost" id="cardCancel">Cancel</button><button class="btn primary" id="cardRetry" hidden>Try again</button><button class="btn primary" id="cardCheck" hidden>Check with Clover</button></div>
+  <div class="row"><button class="btn ghost" id="cardCancel">Cancel</button><button class="btn primary" id="cardConfirm">Card approved</button></div>
 </div>
 <div class="sheet" id="refundSheet">
   <h3>Refund <span id="refundNum"></span></h3>

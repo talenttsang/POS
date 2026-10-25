@@ -39,7 +39,6 @@ from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from functools import wraps
 
-import clover
 import psycopg
 import skuvault
 from flask import Flask, Response, abort, jsonify, request, send_from_directory, session
@@ -93,7 +92,6 @@ def access_code():
 # so it survives restarts and is the same across instances.
 _db_url = secret("SUPABASE_DB_URL", ttl=3600)
 SV = skuvault.Client(lambda name: secret(name, ttl=3600))
-CLV = clover.Client(lambda name: secret(name, ttl=3600))
 app.secret_key = hashlib.sha256(("pos-session:" + (_db_url or uuid.uuid4().hex)).encode()).digest()
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
                   SESSION_COOKIE_SECURE=os.environ.get("K_SERVICE") is not None,
@@ -243,7 +241,6 @@ def serialise_event(e):
             "startsOn": e["starts_on"].isoformat() if e.get("starts_on") else None,
             "endsOn": e["ends_on"].isoformat() if e.get("ends_on") else None,
             "svWarehouse": e.get("sv_warehouse"), "svLocation": e.get("sv_location"),
-            "cloverStore": e.get("clover_store"), "cloverDevice": e.get("clover_device"),
             "taxRate": str(e.get("tax_rate") or 0), "taxLabel": e.get("tax_label"),
             "currency": e["currency"], "isActive": e["is_active"]}
 
@@ -325,9 +322,6 @@ def event_fields(body, creating):
         if key in body:
             v = re.sub(r"[^A-Za-z0-9_\-\[\]]", "", str(body.get(key) or "")).upper()[:40]
             fields[col] = v or None
-    for key, col in (("cloverStore", "clover_store"), ("cloverDevice", "clover_device")):
-        if key in body:
-            fields[col] = re.sub(r"[^A-Za-z0-9_\-]", "", str(body.get(key) or ""))[:80] or None
     if "taxRate" in body:
         # Typed as a percentage in the portal (13 for HST 13%); stored as a fraction.
         raw = str(body.get("taxRate") or "0").strip().rstrip("%")
@@ -353,8 +347,6 @@ def event_fields(body, creating):
         abort(400, "end date is before start date")
     if fields.get("sv_location") and not (fields.get("sv_warehouse") or body.get("svWarehouse")):
         abort(400, "a SkuVault location needs its warehouse")
-    if fields.get("clover_device") and not (fields.get("clover_store") or body.get("cloverStore")):
-        abort(400, "a Clover device needs a Clover store key")
     if fields.get("sv_warehouse"):
         try:
             SV.warehouse_id(fields["sv_warehouse"])
@@ -1230,182 +1222,19 @@ def create_sale():
     lines = build_lines(body.get("items") or [])
     event = event_from_request()
     note = (str(body.get("note") or "").strip() or None)
+    # Card sales are taken on a separate terminal; the register only records them.
+    method = str(body.get("paymentMethod") or "cash")
+    if method not in ("cash", "card"):
+        abort(400, "paymentMethod must be cash or card")
     with pool().connection() as conn:
         with conn.transaction():
-            txn, created = insert_sale(conn, record_id, event, lines, body.get("discount"), note, "cash",
+            txn, created = insert_sale(conn, record_id, event, lines, body.get("discount"), note, method,
                                        cash=body.get("cashReceived"), staff=session.get("staff"), user_id=session.get("user_id"),
                                        tax_exempt=bool(body.get("taxExempt")))
             payload = sale_payload(conn, txn)
     if created:
         start_move_worker()
     return jsonify(payload), 201 if created else 200
-
-
-# ---------------------------------------------------------------------------
-# Card payments on the Clover Flex, through the company's Clover proxy.
-# The register starts a charge, the reader prompts the customer, and the
-# register polls until the outcome is known. The sale is only written once
-# Clover says paid, so the Sales list never shows a declined card.
-# ---------------------------------------------------------------------------
-_card_threads = {}
-
-
-@app.post("/api/card/charge")
-@require_unlock
-def card_charge():
-    body = request.get_json(silent=True) or {}
-    record_id = record_id_of(body)
-    event = event_from_request()
-    if not event.get("clover_store"):
-        abort(400, f"this {VENUE} has no Clover store key set up")
-    lines = build_lines(body.get("items") or [])
-    tax_exempt = bool(body.get("taxExempt"))
-    subtotal, discount, tax, grand = totals(lines, body.get("discount"), 0 if tax_exempt else (event.get("tax_rate") or 0))
-    if grand <= 0:
-        abort(400, "nothing to charge")
-    note = (str(body.get("note") or "").strip() or None)
-    cart = {"items": [({"custom": True, "name": l["product"]["name"], "unitPrice": str(l["unit_price"])} if l["product"]["id"] is None
-                       else {"productId": str(l["product"]["id"])})
-                      | {"quantity": l["quantity"], "barcode": l["barcode"], "discount": str(l.get("line_discount", 0)), "gift": l.get("gift", False)}
-                      for l in lines],
-            "discount": str(discount), "note": note, "taxExempt": tax_exempt}
-    with pool().connection() as conn:
-        row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
-        if not row:
-            row = conn.execute(
-                """insert into pos_card_payments (client_record_id, event_id, amount, currency, store_key, device, staff_name, cart)
-                   values (%s, %s, %s, %s, %s, %s, %s, %s) returning *""",
-                (record_id, event["id"], grand, event["currency"], event["clover_store"], event.get("clover_device"),
-                 session.get("staff"), json.dumps(cart)),
-            ).fetchone()
-            conn.commit()
-            t = threading.Thread(target=run_card_charge, args=(record_id, session.get("staff"), session.get("user_id")), daemon=True)
-            _card_threads[record_id] = t
-            t.start()
-    return jsonify(card_status_payload(row)), 202
-
-
-def run_card_charge(record_id, staff, user_id):
-    """Background: ask the reader, then record the sale if it was paid."""
-    try:
-        with pool().connection() as conn:
-            row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
-        note = f"Pikumi POS {clover.clover_ref(row['id'])}"
-        device = row["device"]
-        if not device:
-            # The proxy keeps the Flex for each store key; use its roster so the request names a reader.
-            try:
-                device = CLV.device_for(row["store_key"])
-            except clover.CloverError as exc:
-                app.logger.warning("card charge %s: roster lookup failed: %s", record_id, exc)
-            if device:
-                with pool().connection() as conn:
-                    conn.execute("update pos_card_payments set device = %s where id = %s", (device, row["id"])); conn.commit()
-        amount_minor = int(round(float(row["amount"]) * 100))
-        outcome, pid, message, raw = CLV.send_payment(row["store_key"], device, amount_minor, clover.clover_ref(row["id"]), record_id, note)
-        if outcome == "unknown":
-            # As the helper does: a 500 or a lost reply may hide a completed charge. Ask before giving up.
-            outcome, pid, message, raw = verify_card(row, amount_minor, message, raw, attempts=3, wait=3)
-        settle_card(record_id, outcome, pid, message, raw, staff, user_id)
-    except Exception as exc:  # never let a thread die silently
-        app.logger.exception("card charge %s: %s", record_id, exc)
-        settle_card(record_id, "unknown", None, str(exc)[:300], None, staff, user_id)
-    finally:
-        _card_threads.pop(record_id, None)
-
-
-def verify_card(row, amount_minor, message, raw, attempts=1, wait=0):
-    """Poll the proxy's payment-status for this attempt. Paid wins; otherwise the
-    attempt is failed (the terminal cancelled or declined it) and can be retried."""
-    ref = clover.clover_ref(row["id"])
-    for i in range(attempts):
-        # The proxy's charge record is the surest sign; payment-status is the helper's check.
-        try:
-            charge = CLV.charge_for(row["store_key"], ref)
-        except clover.CloverError as exc:
-            app.logger.warning("charges-by-order for %s: %s", ref, exc)
-            charge = None
-        if charge and str(charge.get("status", "")).upper() == "PAID" and charge.get("payment_id"):
-            return "paid", charge["payment_id"], None, {"sent": raw, "charge": charge}
-        try:
-            status = CLV.payment_status(row["store_key"], ref, amount_minor)
-        except clover.CloverError as exc:
-            app.logger.warning("payment-status for %s: %s", ref, exc)
-            status = None
-        if status and status.get("paid"):
-            return "paid", status.get("paymentId"), None, {"sent": raw, "status": status}
-        if i < attempts - 1:
-            time.sleep(wait)
-    return "failed", None, message or "Payment cancelled on the terminal", raw
-
-
-def settle_card(record_id, outcome, pid, message, raw, staff, user_id):
-    with pool().connection() as conn:
-        with conn.transaction():
-            row = conn.execute("select * from pos_card_payments where client_record_id = %s for update", (record_id,)).fetchone()
-            if row["status"] == "paid":
-                return
-            if outcome == "paid":
-                event = conn.execute("select * from pos_events where id = %s", (row["event_id"],)).fetchone()
-                cart = row["cart"]
-                lines = build_lines(cart["items"])
-                txn, _ = insert_sale(conn, record_id, event, lines, cart.get("discount"), cart.get("note"), "card",
-                                     staff=staff or row["staff_name"], user_id=user_id, tax_exempt=bool(cart.get("taxExempt")))
-                conn.execute("update pos_card_payments set status = 'paid', transaction_id = %s, clover_payment_id = %s, message = null, "
-                             "response = %s, updated_at = now() where id = %s",
-                             (txn["id"], pid, json.dumps(raw)[:4000] if raw is not None else None, row["id"]))
-            else:
-                conn.execute("update pos_card_payments set status = %s, message = %s, response = %s, updated_at = now() where id = %s",
-                             (outcome, (message or "")[:300], json.dumps(raw)[:4000] if raw is not None else None, row["id"]))
-    if outcome == "paid":
-        start_move_worker()
-
-
-def card_status_payload(row, sale=None):
-    return {"clientRecordId": row["client_record_id"], "status": row["status"], "amount": str(row["amount"]),
-            "message": row.get("message"), "paymentId": row.get("clover_payment_id"), "sale": sale}
-
-
-@app.get("/api/card/<record_id>")
-@require_unlock
-def card_status(record_id):
-    with pool().connection() as conn:
-        row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
-        if not row:
-            abort(404, "no such card payment")
-        sale = None
-        if row["transaction_id"]:
-            t = conn.execute("select * from pos_transactions where id = %s", (row["transaction_id"],)).fetchone()
-            sale = sale_payload(conn, t)
-    return jsonify(card_status_payload(row, sale))
-
-
-@app.post("/api/card/<record_id>/check")
-@require_unlock
-def card_check(record_id):
-    """Outcome unknown (no reply from the reader): ask Clover whether the order was paid."""
-    with pool().connection() as conn:
-        row = conn.execute("select * from pos_card_payments where client_record_id = %s", (record_id,)).fetchone()
-    if not row:
-        abort(404, "no such card payment")
-    if row["status"] in ("paid", "failed"):
-        return card_status(record_id)
-    outcome, pid, message, raw = verify_card(row, int(round(float(row["amount"]) * 100)),
-                                             "Clover has no payment for this sale; charge again", None)
-    settle_card(record_id, outcome, pid, message, raw, session.get("staff"), session.get("user_id"))
-    return card_status(record_id)
-
-
-@app.get("/api/admin/clover/devices")
-@require_admin
-def admin_clover_devices():
-    store = re.sub(r"[^A-Za-z0-9_\-]", "", request.args.get("store", ""))[:80]
-    if not store:
-        abort(400, "store key required")
-    try:
-        return jsonify(CLV.devices(store))
-    except clover.CloverError as exc:
-        abort(502, str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -1630,20 +1459,8 @@ def refund(number):
             if amount <= 0 or amount > t["amount_paid"]:
                 abort(400, "refund amount out of range")
             full = amount == money(t["amount_paid"])
-            method = "cash"
-            # A card sale is refunded to the card through Clover unless the admin chooses cash
-            # (for example when Clover refuses the refund).
-            if t["payment_method"] == "card" and str(body.get("method") or "card") != "cash":
-                # Money goes back to the same card through the Clover proxy before we record it.
-                cp = conn.execute("select * from pos_card_payments where transaction_id = %s", (t["id"],)).fetchone()
-                if not cp or not cp["clover_payment_id"]:
-                    abort(409, "no Clover payment is recorded for this sale")
-                try:
-                    CLV.refund(cp["store_key"], cp["device"] or CLV.device_for(cp["store_key"]), cp["clover_payment_id"],
-                               int(round(float(amount) * 100)), clover.clover_ref(cp["id"]))
-                except clover.CloverError as exc:
-                    abort(502, f"Clover refund failed: {exc}")
-                method = "card"
+            # A card sale goes back to the card on the terminal unless the admin pays it back in cash.
+            method = "card" if t["payment_method"] == "card" and str(body.get("method") or "card") != "cash" else "cash"
             t = conn.execute(
                 """update pos_transactions set refund_amount = %s, refund_method = %s, refund_reason = %s,
                      refund_approved_by = %s, refunded_at = now(), status = case when %s then 'refunded' else status end
@@ -1686,7 +1503,7 @@ def invoice_pdf(number):
 @require_unlock
 def summary():
     """Per Toronto day, cash and card side by side for end-of-day reconciliation:
-    cash against the drawer count, card against Clover's batch. A refund counts on
+    cash against the drawer count, card against the terminal's batch. A refund counts on
     the day and by the method it was paid back (a card sale refunded in cash comes
     out of the drawer)."""
     event = event_from_request()

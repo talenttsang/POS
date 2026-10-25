@@ -138,30 +138,16 @@ service's project. SkuVault allows about five calls a minute per endpoint, so
 stock is cached for three minutes per location and served stale when
 throttled. `src/cloud_run/skuvault.py` is the whole client.
 
-## Card payments on a Clover Flex
+## Card payments
 
-A store names the Clover store key the proxy knows it by (admin portal,
-store form; the Markham store is `pikumi`). The Flex serial is optional: the
-proxy keeps a reader per store key, and the register uses that one unless a
-serial is given. The register then shows a **Card** button next to **Cash**:
-
-1. `POST /api/card/charge` writes a `pos_card_payments` row and asks the
-   company's Clover proxy (`CLOVER_PROXY_URL`, default the EC2 host) to start
-   the charge on the reader, in a background thread;
-2. the register polls `GET /api/card/<record id>` every two seconds while
-   the customer taps;
-3. **paid** records the sale with `payment_method = 'card'` (no cash detail)
-   and queues the inventory move; **failed** shows Clover's message with
-   "Try again" (a fresh record id, so a declined attempt is never confused
-   with a retry); **unknown** (no reply from the reader) offers "Check with
-   Clover", which looks the order up by record id and settles it either way.
-
-Refunding a card sale sends the money back to the card through the proxy
-first (`refund_method = 'card'`); card sales never appear in the cash drawer
-summary. `CLOVER_SANDBOX=1` uses the proxy's sandbox endpoint; an optional
-`CLOVER_PROXY_SECRET` secret is sent as the `x-proxy-secret` header (name
-overridable with `CLOVER_PROXY_SECRET_HEADER`). `src/cloud_run/clover.py` is
-the whole client.
+The register connects to no card reader. Cards are taken on a separate
+terminal: the cashier taps **Card**, runs the amount on the terminal, then
+taps **Card approved**, which records the sale with
+`payment_method = 'card'` (no cash detail) through the same `POST /api/sales`
+as cash. Refunding a card sale records it as back to the card
+(`refund_method = 'card'`, done on the terminal) unless the admin picks
+**Refund in cash instead**. Card sales never appear in the cash drawer
+summary.
 
 ## Custom domain
 

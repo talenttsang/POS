@@ -469,11 +469,9 @@
     const t = cartTotals();
     $('cartTotals').innerHTML = totalsHtml(t);
     $('chargeBtn').disabled = !state.cart.length;
-    const flex = !!(currentEvent() && currentEvent().cloverStore);
-    $('cardBtn').hidden = !flex;
-    $('cardBtn').disabled = !state.cart.length || cartTotals().total <= 0;
-    if (flex) { $('cardBtn').textContent = state.cart.length ? `Card ${money(cartTotals().total)}` : 'Card'; }
-    $('chargeBtn').textContent = state.cart.length ? `${currentEvent() && currentEvent().cloverStore ? 'Cash' : 'Charge'} ${money(t.total)}` : 'Charge';
+    $('cardBtn').disabled = !state.cart.length || t.total <= 0;
+    $('cardBtn').textContent = state.cart.length ? `Card ${money(t.total)}` : 'Card';
+    $('chargeBtn').textContent = state.cart.length ? `Cash ${money(t.total)}` : 'Cash';
   };
 
   $('cartLines').addEventListener('click', (e) => {
@@ -540,65 +538,41 @@
   // ------------------------------------------------------------ payment
 
   $('chargeBtn').addEventListener('click', () => (PAYMENT_SCREEN ? openPayment() : chargeExact()));
-  $('cardBtn').addEventListener('click', () => chargeCard());
+  $('cardBtn').addEventListener('click', () => openCard());
 
-  // ---- card payments on the Clover Flex: start, then poll until the reader answers
-  let cardPoll = null;
-  const cardPayload = () => ({
-    clientRecordId: recordId(),
-    eventId: state.eventId,
-    items: lineItems(),
-    discount: cartTotals().discount,
-    taxExempt: state.taxOff,
-  });
-  const cardUi = (text, { err = '', retry = false, check = false, cancel = 'Cancel' } = {}) => {
-    $('cardStatus').textContent = text; $('cardErr').textContent = err;
-    $('cardRetry').hidden = !retry; $('cardCheck').hidden = !check; $('cardCancel').textContent = cancel;
-  };
-  const chargeCard = async (payload) => {
+  // ---- card payments: the cashier runs the card on a separate terminal, then records the sale here
+  const openCard = () => {
     if (!state.cart.length) return;
-    payload = payload || cardPayload();
-    state.cardPending = payload;
+    state.cardPending = null;
     $('cardAmount').textContent = money(cartTotals().total);
-    cardUi('Sending to the Clover Flex…');
+    $('cardErr').textContent = '';
+    $('cardConfirm').disabled = false; $('cardConfirm').textContent = 'Card approved';
     openSheet('cardSheet');
+  };
+  // Re-pressing after a failure resends the same payload, so a retry can never double-record.
+  $('cardConfirm').addEventListener('click', async () => {
+    const payload = state.cardPending || {
+      clientRecordId: recordId(),
+      eventId: state.eventId,
+      items: lineItems(),
+      discount: cartTotals().discount,
+      taxExempt: state.taxOff,
+      paymentMethod: 'card',
+    };
+    state.cardPending = payload;
+    const btn = $('cardConfirm');
+    btn.disabled = true; btn.textContent = 'Recording sale…'; $('cardErr').textContent = '';
     try {
-      await api('/api/card/charge', { method: 'POST', body: payload });
-      cardUi('Hand the Flex to the customer and follow the prompts on its screen.');
-      pollCard(payload.clientRecordId);
+      const sale = await api('/api/sales', { method: 'POST', body: payload });
+      state.cardPending = null;
+      closeSheets();
+      finishSale(sale);
     } catch (err) {
-      cardUi('The charge could not be started.', { err: err.message, retry: true });
+      $('cardErr').textContent = `${err.message}. Check the connection and tap again.`;
+      btn.disabled = false; btn.textContent = 'Retry';
     }
-  };
-  const pollCard = (id) => {
-    clearInterval(cardPoll);
-    cardPoll = setInterval(async () => {
-      try {
-        const r = await api(`/api/card/${encodeURIComponent(id)}`);
-        if (r.status === 'started') return;
-        clearInterval(cardPoll);
-        cardOutcome(r);
-      } catch (err) { /* keep polling; the network may be flaky */ }
-    }, 2000);
-  };
-  const cardOutcome = (r) => {
-    if (r.status === 'paid') {
-      closeSheets(); state.cardPending = null;
-      finishSale(r.sale);
-    } else if (r.status === 'failed') {
-      cardUi('The card was not charged.', { err: r.message || 'Declined or cancelled on the reader.', retry: true });
-    } else {
-      cardUi('No answer from the Flex. The customer may or may not have paid.', { err: r.message || '', check: true, cancel: 'Give up' });
-    }
-  };
-  $('cardRetry').addEventListener('click', () => chargeCard());            // a fresh attempt gets a new record id
-  $('cardCheck').addEventListener('click', async () => {
-    const id = state.cardPending && state.cardPending.clientRecordId; if (!id) return;
-    cardUi('Asking Clover…');
-    try { cardOutcome(await api(`/api/card/${encodeURIComponent(id)}/check`, { method: 'POST', body: {} })); }
-    catch (err) { cardUi('Could not reach Clover.', { err: err.message, check: true, cancel: 'Give up' }); }
   });
-  $('cardCancel').addEventListener('click', () => { clearInterval(cardPoll); closeSheets(); });
+  $('cardCancel').addEventListener('click', () => { state.cardPending = null; closeSheets(); });
 
   /** Record the sale at the exact total, no payment screen. Re-pressing after a
       failure resends the same payload, so a retry can never double-record. */
@@ -621,9 +595,9 @@
       state.pendingSale = null;
       finishSale(sale);
     } catch (err) {
-      toast(`${err.message}. Check the connection and tap Charge again.`);
+      toast(`${err.message}. Check the connection and tap Cash again.`);
       btn.disabled = false;
-      btn.textContent = 'Retry charge';
+      btn.textContent = 'Retry cash';
     }
   };
   $('payBack').addEventListener('click', () => go('sell'));
@@ -760,9 +734,9 @@
 
   const renderSummary = (rows) => {
     if (!rows.length) { $('summaryTable').innerHTML = ''; return; }
-    // Day total first, then how it splits: cash (count the drawer) and card (match Clover).
+    // Day total first, then how it splits: cash (count the drawer) and card (match the terminal).
     const cell = (net, n, refunded) => `<b class="money">${money(net)}</b><div class="sub">${n} sale${n === 1 ? '' : 's'}${Number(refunded) ? ` · ${money(refunded)} refunded` : ''}</div>`;
-    $('summaryTable').innerHTML = `<tr><th>Day</th><th class="tot">Total</th><th class="grp pm-cash">Cash · count the drawer</th><th class="grp pm-card">Card · match Clover</th></tr>`
+    $('summaryTable').innerHTML = `<tr><th>Day</th><th class="tot">Total</th><th class="grp pm-cash">Cash · count the drawer</th><th class="grp pm-card">Card · match the terminal</th></tr>`
       + rows.map((r) => {
         const net = num(r.cash_net) + num(r.card_net);
         const refunded = num(r.cash_refunded) + num(r.card_refunded);
@@ -796,7 +770,7 @@
         ${Number(o.discount) ? `<div class="trow"><span>Discount</span><span class="money">−${money(o.discount)}</span></div>` : ''}
         ${Number(o.tax) ? `<div class="trow"><span>${esc(o.taxLabel || 'Tax')}</span><span class="money">${money(o.tax)}</span></div>` : ''}
         <div class="trow grand"><span>Total</span><span class="money">${money(o.total)}</span></div>
-        ${o.paymentMethod === 'card' ? '<div class="trow"><span>Paid by card</span><span>Clover Flex</span></div>' : `<div class="trow"><span>Cash received</span><span class="money">${money(o.cashReceived)}</span></div>
+        ${o.paymentMethod === 'card' ? '<div class="trow"><span>Paid by card</span><span></span></div>' : `<div class="trow"><span>Cash received</span><span class="money">${money(o.cashReceived)}</span></div>
         <div class="trow"><span>Change</span><span class="money">${money(o.change)}</span></div>`}
         ${o.refundAmount ? `<div class="trow" style="color:var(--danger)"><span>Refunded · ${esc(o.refundReason || '')}</span><span class="money">−${money(o.refundAmount)}</span></div>` : ''}
       </div>
@@ -811,8 +785,8 @@
       $('refundNum').textContent = `#${o.number}`;
       $('refundReason').value = ''; $('refundAmount').value = ''; $('refundCode').value = ''; $('refundAdminName').value = ''; $('refundAdminPin').value = ''; $('refundErr').textContent = '';
       $('refundApproval').hidden = state.config.role === 'admin';
-      $('refundCash').hidden = true;
-      $('refundHow').textContent = o.paymentMethod === 'card' ? 'The money goes back to the customer\'s card through Clover; an admin has to approve.' : 'Refunds are paid back in cash and need an admin to approve.';
+      $('refundCash').hidden = o.paymentMethod !== 'card';
+      $('refundHow').textContent = o.paymentMethod === 'card' ? 'Refund the card on the card terminal, then record it here; an admin has to approve.' : 'Refunds are paid back in cash and need an admin to approve.';
       $('refundAmount').placeholder = `Amount (blank = full ${money(o.amountPaid)})`;
       openSheet('refundSheet');
     });
@@ -827,7 +801,7 @@
     if (!body.reason) { $('refundErr').textContent = 'Pick a reason'; return; }
     const btn = $('refundConfirm'); const cashBtn = $('refundCash');
     btn.disabled = cashBtn.disabled = true;
-    btn.textContent = o.paymentMethod === 'card' && method !== 'cash' ? 'Refunding on the Flex…' : 'Refunding…';
+    btn.textContent = 'Refunding…';
     try {
       await api(`/api/sales/${o.number}/refund`, { method: 'POST', body });
       closeSheets();
@@ -835,11 +809,7 @@
     } catch (err) {
       // A refund that already went through (a second tap, or a reply lost on the way) is done, not an error.
       if (/already refunded/i.test(err.message)) { closeSheets(); toast(`Sale #${o.number} is already refunded`); }
-      else {
-        $('refundErr').textContent = err.message;
-        // Clover would not take the refund back to the card: let the admin hand cash over instead.
-        if (o.paymentMethod === 'card' && !method) cashBtn.hidden = false;
-      }
+      else $('refundErr').textContent = err.message;
     } finally {
       btn.disabled = cashBtn.disabled = false; btn.textContent = 'Refund';
       await loadOrders().catch(() => {});
@@ -929,7 +899,7 @@
 
     const pay = Object.fromEntries((d.byPayment || []).map((x) => [x.method, x]));
     $('anPay').innerHTML = ['cash', 'card'].map((m) => { const x = pay[m] || { sales: 0, taken: 0, refunded: 0, net: 0 };
-      return `<div class="pay-tile pm-${m}"><div class="l"><span class="pay pm-${m}">${m === 'card' ? 'Card' : 'Cash'}</span> ${m === 'card' ? 'match to Clover' : 'count against the drawer'}</div>
+      return `<div class="pay-tile pm-${m}"><div class="l"><span class="pay pm-${m}">${m === 'card' ? 'Card' : 'Cash'}</span> ${m === 'card' ? 'match to the terminal' : 'count against the drawer'}</div>
         <div class="v money">${money(num(x.net))}</div><div class="d">${x.sales} sale${Number(x.sales) === 1 ? '' : 's'} · ${money(num(x.taken))} taken · ${money(num(x.refunded))} refunded</div></div>`; }).join('');
     $('tblDay').innerHTML = table(['Day', 'Sales', 'Units', 'Sold', 'Refunds', 'Net', 'Cash net', 'Card net'], d.byDay.map((x) => [x.day, x.sales, x.units, money(num(x.revenue)), money(num(x.refunds)), money(num(x.revenue) - num(x.refunds)), money(num(x.cash_net)), money(num(x.card_net))]));
     $('tblCategory').innerHTML = table(['Category', 'Units', 'Revenue', 'Cost', 'Margin'], d.byCategory.map((x) => [x.category, x.units, money(num(x.revenue)), x.cost_of_goods == null ? '—' : money(num(x.cost_of_goods)), x.cost_of_goods == null ? '—' : pct((num(x.revenue_with_cost) - num(x.cost_of_goods)) / num(x.revenue_with_cost) * 100)]));
